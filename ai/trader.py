@@ -330,8 +330,13 @@ class PureAITrader:
             if should_send_detailed_guide:
                 self.last_detailed_guide_cycle = self.current_cycle
                 detailed_guide = f"""
-开仓指南：最大数量=(余额×0.7×10)/(价格×1.05)
-XRP: 1张=100个，amount=0.1代表10个XRP
+开仓指南：最大数量=(可用余额×0.7×10)/(价格×1.05)
+注意：使用【可用余额】${avail_balance:.2f}，不是账户总金额！
+
+XRP合约规则：
+- amount=1 代表100个XRP（1张合约）
+- amount=10 代表1000个XRP（10张合约）
+- 最小数量：10（即1000个XRP）
 """
             else:
                 detailed_guide = ""
