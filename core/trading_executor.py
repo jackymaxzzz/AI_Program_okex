@@ -597,13 +597,18 @@ class TradingExecutor:
             if stop_loss > 0 or take_profit > 0:
                 try:
                     close_side = 'sell' if side == 'long' else 'buy'
+                    trade_mode = TRADING_CONFIG.get('trade_mode', 'cross')
                     
-                    # 构建订单参数（使用ccxt的标准方式）
+                    # 构建订单参数
+                    # 注意：全仓模式(cross)不使用posSide，逐仓模式(isolated)才使用
                     params = {
-                        'tdMode': TRADING_CONFIG.get('trade_mode', 'cross'),
-                        'posSide': side,
+                        'tdMode': trade_mode,
                         'reduceOnly': True
                     }
+                    
+                    # 只有逐仓模式才需要posSide
+                    if trade_mode == 'isolated':
+                        params['posSide'] = side
                     
                     # 设置止损单
                     if stop_loss > 0:
