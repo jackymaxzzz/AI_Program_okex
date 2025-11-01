@@ -482,34 +482,23 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                 
                 # 从API获取开仓时间
                 try:
-                    from data import DataFetcher
                     from datetime import datetime, timedelta
                     
-                    data_fetcher = DataFetcher()
                     symbol = position.get('symbol')
                     
-                    # 获取最近的成交记录
-                    trades = data_fetcher.exchange.fetch_my_trades(
-                        symbol=symbol,
-                        since=int((datetime.now() - timedelta(days=7)).timestamp() * 1000),
-                        limit=100
-                    )
-                    
-                    # 找到最近的开仓成交（fillPnl为0的）
-                    for t in reversed(trades):
-                        fill_pnl = t.get('info', {}).get('fillPnl', '0')
-                        if fill_pnl == '0':  # 开仓成交
-                            open_time = datetime.fromtimestamp(t['timestamp'] / 1000)
-                            open_time_for_db = open_time.isoformat()
-                            duration_seconds = (datetime.now() - open_time).total_seconds()
-                            
-                            if duration_seconds < 3600:
-                                holding_duration = f"{duration_seconds/60:.0f}分钟"
-                            elif duration_seconds < 86400:
-                                holding_duration = f"{duration_seconds/3600:.1f}小时"
-                            else:
-                                holding_duration = f"{duration_seconds/86400:.1f}天"
-                            break
+                    # 使用position自带的时间戳（如果有）
+                    pos_timestamp = position.get('timestamp')
+                    if pos_timestamp:
+                        open_time = datetime.fromtimestamp(pos_timestamp / 1000)
+                        open_time_for_db = open_time.isoformat()
+                        duration_seconds = (datetime.now() - open_time).total_seconds()
+                        
+                        if duration_seconds < 3600:
+                            holding_duration = f"{duration_seconds/60:.0f}分钟"
+                        elif duration_seconds < 86400:
+                            holding_duration = f"{duration_seconds/3600:.1f}小时"
+                        else:
+                            holding_duration = f"{duration_seconds/86400:.1f}天"
                 except Exception as e:
                     pass
                 
