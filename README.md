@@ -1,3 +1,5 @@
+#本人菜鸡，只是纯粹对代码和AI的热爱,编写这个项目，有问题请大家多多指教
+
 # 🤖 AI驱动的加密货币交易系统
 
 基于DeepSeek AI的全自动加密货币交易系统，支持OKX交易所，具备MCP记忆系统和模块化架构。
@@ -268,6 +270,8 @@ MIT License
 
 - GitHub: [@jackymaxzzz](https://github.com/jackymaxzzz)
 - 项目地址: https://github.com/jackymaxzzz/AI_Program_okex
+
+
 
 ---
 
