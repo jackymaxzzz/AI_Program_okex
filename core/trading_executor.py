@@ -629,7 +629,7 @@ class TradingExecutor:
                                 'slOrdPx': '-1'  # 市价单
                             }
                             
-                            print(f"  [调试] 止损单参数: {sl_params}")
+                            # print(f"  [调试] 止损单参数: {sl_params}")
                             
                             # 使用OKX原生API
                             result = self.data_fetcher.exchange.private_post_trade_order_algo(sl_params)
@@ -661,7 +661,7 @@ class TradingExecutor:
                                 'tpOrdPx': '-1'  # 市价单
                             }
                             
-                            print(f"  [调试] 止盈单参数: {tp_params}")
+                            # print(f"  [调试] 止盈单参数: {tp_params}")
                             
                             # 使用OKX原生API
                             result = self.data_fetcher.exchange.private_post_trade_order_algo(tp_params)
