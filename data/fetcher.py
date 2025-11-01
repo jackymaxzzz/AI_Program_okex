@@ -401,6 +401,9 @@ class DataFetcher:
                     contract_size = float(pos.get('contractSize', 0.01))
                     btc_amount = contracts * contract_size
                     
+                    # 调试：打印原始时间字段
+                    print(f"[调试] {pos['symbol']} 原始数据: cTime={pos.get('cTime')}, uTime={pos.get('uTime')}, cTime类型={type(pos.get('cTime'))}")
+                    
                     pos_info = {
                         'side': pos['side'],  # 'long' or 'short'
                         'size': contracts,
