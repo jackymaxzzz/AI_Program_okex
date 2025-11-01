@@ -613,11 +613,12 @@ class TradingExecutor:
                                 type='stop',  # 止损单
                                 side=close_side,
                                 amount=amount,
-                                price=None,  # 市价
+                                price=stop_loss,  # 触发价格
                                 params={
                                     **params,
-                                    'stopLossPrice': stop_loss,
-                                    'triggerPrice': stop_loss
+                                    'stopPrice': stop_loss,  # 触发价
+                                    'triggerPrice': stop_loss,
+                                    'orderPx': '-1'  # -1表示市价单
                                 }
                             )
                             print(f"  [完成] 止损单已设置: ${stop_loss:.2f} (订单ID: {sl_order.get('id', 'N/A')})")
@@ -632,11 +633,12 @@ class TradingExecutor:
                                 type='take_profit',  # 止盈单
                                 side=close_side,
                                 amount=amount,
-                                price=None,  # 市价
+                                price=take_profit,  # 触发价格
                                 params={
                                     **params,
-                                    'takeProfitPrice': take_profit,
-                                    'triggerPrice': take_profit
+                                    'stopPrice': take_profit,  # 触发价
+                                    'triggerPrice': take_profit,
+                                    'orderPx': '-1'  # -1表示市价单
                                 }
                             )
                             print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (订单ID: {tp_order.get('id', 'N/A')})")
