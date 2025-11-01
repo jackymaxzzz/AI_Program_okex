@@ -125,9 +125,19 @@ class TradingExecutor:
                 return None
         else:
             # 第一次出现开仓信号，记录待确认
+            coin = symbol_coin
+            amount = decision.get('amount', TRADING_CONFIG['amounts'].get(coin, 0.01))
+            stop_loss = decision.get('stop_loss', 0)
+            take_profit = decision.get('take_profit', 0)
+            confidence = decision.get('confidence', 0)
+            
             print(f"\n[待确认] {symbol_coin} 开仓信号")
             print(f"   信号: {signal}")
+            print(f"   数量: {amount}")
             print(f"   价格: ${current_price:.2f}")
+            print(f"   止损: ${stop_loss:.2f}")
+            print(f"   止盈: ${take_profit:.2f}")
+            print(f"   信心度: {confidence}%")
             print(f"   等待下一周期确认...\n")
             
             self.pending_open_decisions[symbol_coin] = {
