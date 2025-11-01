@@ -617,19 +617,17 @@ class TradingExecutor:
                             inst_id = symbol.replace('/', '-').replace(':USDT', '-SWAP')
                             
                             # 直接使用OKX的algo order API
+                            # 注意：algo order API总是需要posSide参数
                             sl_params = {
                                 'instId': inst_id,
                                 'tdMode': trade_mode,
                                 'side': close_side,
+                                'posSide': side,  # 全仓模式也需要posSide
                                 'ordType': 'conditional',  # 条件单
                                 'sz': str(amount),
                                 'slTriggerPx': str(stop_loss),  # 止损触发价
                                 'slOrdPx': '-1'  # 市价单
                             }
-                            
-                            # 只有逐仓模式才添加posSide
-                            if trade_mode == 'isolated':
-                                sl_params['posSide'] = side
                             
                             print(f"  [调试] 止损单参数: {sl_params}")
                             
@@ -651,19 +649,17 @@ class TradingExecutor:
                             inst_id = symbol.replace('/', '-').replace(':USDT', '-SWAP')
                             
                             # 直接使用OKX的algo order API
+                            # 注意：algo order API总是需要posSide参数
                             tp_params = {
                                 'instId': inst_id,
                                 'tdMode': trade_mode,
                                 'side': close_side,
+                                'posSide': side,  # 全仓模式也需要posSide
                                 'ordType': 'conditional',  # 条件单
                                 'sz': str(amount),
                                 'tpTriggerPx': str(take_profit),  # 止盈触发价
                                 'tpOrdPx': '-1'  # 市价单
                             }
-                            
-                            # 只有逐仓模式才添加posSide
-                            if trade_mode == 'isolated':
-                                tp_params['posSide'] = side
                             
                             print(f"  [调试] 止盈单参数: {tp_params}")
                             
