@@ -2,6 +2,8 @@
 简化版主程序 - 完全信任AI的判断
 """
 import time
+import sys
+import os
 from datetime import datetime
 from typing import Dict, Optional
 from openai import OpenAI
@@ -11,6 +13,22 @@ from ai import PureAITrader
 from data import DataFetcher, TradeDatabase, calculate_technical_indicators, format_market_data
 from mcp import MCPDatabaseSync
 from core import TradingExecutor, PositionManager, OrderSync
+
+
+class Logger:
+    """同时输出到终端和文件的日志类"""
+    def __init__(self, filename):
+        self.terminal = sys.stdout
+        self.log = open(filename, 'a', encoding='utf-8')
+    
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+    
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 
 
 class SimpleAITradingBot:
@@ -382,4 +400,15 @@ def main():
 
 
 if __name__ == "__main__":
+    # 设置日志文件
+    log_dir = "logs"
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+    
+    log_file = os.path.join(log_dir, f"trading_{datetime.now().strftime('%Y%m%d')}.log")
+    sys.stdout = Logger(log_file)
+    sys.stderr = sys.stdout
+    
+    print(f"[日志] 日志文件: {log_file}")
+    
     main()
