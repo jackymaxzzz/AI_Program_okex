@@ -613,9 +613,12 @@ class TradingExecutor:
                     # 设置止损单（使用OKX原生API）
                     if stop_loss > 0:
                         try:
+                            # 转换symbol格式：SOL/USDT:USDT -> SOL-USDT-SWAP
+                            inst_id = symbol.replace('/', '-').replace(':USDT', '-SWAP')
+                            
                             # 直接使用OKX的algo order API
                             sl_params = {
-                                'instId': symbol,
+                                'instId': inst_id,
                                 'tdMode': trade_mode,
                                 'side': close_side,
                                 'ordType': 'conditional',  # 条件单
@@ -644,9 +647,12 @@ class TradingExecutor:
                     # 设置止盈单（使用OKX原生API）
                     if take_profit > 0:
                         try:
+                            # 转换symbol格式：SOL/USDT:USDT -> SOL-USDT-SWAP
+                            inst_id = symbol.replace('/', '-').replace(':USDT', '-SWAP')
+                            
                             # 直接使用OKX的algo order API
                             tp_params = {
-                                'instId': symbol,
+                                'instId': inst_id,
                                 'tdMode': trade_mode,
                                 'side': close_side,
                                 'ordType': 'conditional',  # 条件单
