@@ -24,18 +24,29 @@ class OrderSync:
         self.trade_db = trade_db
     
     def sync_filled_orders_from_api(self):
-        """从API同步最近的成交订单到数据库"""
+        """
+        从OKX API同步已平仓的历史订单到数据库
+        
+        流程：
+        1. 从OKX API获取历史成交记录
+        2. 只处理平仓订单（fillPnl != '0'）
+        3. 写入数据库（避免重复）
+        4. 返回同步数量
+        """
         try:
-            # 获取最近7天的成交订单
+            import sqlite3
+            import json
             synced_count = 0
             
             # 获取所有交易对的历史订单
             symbols = ['BTC/USDT:USDT', 'ETH/USDT:USDT', 'SOL/USDT:USDT', 
                       'BNB/USDT:USDT', 'DOGE/USDT:USDT', 'XRP/USDT:USDT']
             
+            print(f"[同步] 开始从OKX API同步历史订单...")
+            
             for symbol in symbols:
                 try:
-                    # 获取该币种的历史订单
+                    # 获取该币种最近7天的历史订单
                     orders = self.data_fetcher.exchange.fetch_my_trades(
                         symbol=symbol,
                         since=int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
@@ -44,169 +55,76 @@ class OrderSync:
                     if not orders:
                         continue
                     
-                    # 按时间排序
-                    orders.sort(key=lambda x: x.get('timestamp', 0))
+                    # 只处理平仓订单（fillPnl != '0'）
+                    close_orders = [o for o in orders if o.get('info', {}).get('fillPnl', '0') != '0']
                     
-                    # 获取数据库中所有未平仓的交易
-                    open_trades = self.trade_db.get_open_trades()
+                    if not close_orders:
+                        continue
                     
-                    # 处理每个订单
-                    for order in orders:
-                        order_side = order.get('side')  # 'buy' or 'sell'
-                        order_price = order.get('price', 0)
-                        order_amount = order.get('amount', 0)
-                        order_time = datetime.fromtimestamp(order.get('timestamp', 0) / 1000)
-                        
-                        # 查找匹配的数据库交易
-                        for db_trade in open_trades:
-                            if db_trade.get('symbol') != symbol:
-                                continue
+                    print(f"  {symbol}: 找到{len(close_orders)}笔平仓订单")
+                    
+                    # 处理每笔平仓订单
+                    for order in close_orders:
+                        try:
+                            # 从OKX info中获取详细信息
+                            info = order.get('info', {})
+                            fill_pnl = float(info.get('fillPnl', 0))
+                            order_id = info.get('ordId', '')
                             
-                            db_side = db_trade.get('side')  # 'long' or 'short'
-                            entry_price = db_trade.get('entry_price', 0)
-                            entry_time_str = db_trade.get('entry_time', '')
-                            if not entry_time_str:
-                                continue  # 跳过没有entry_time的记录
-                            entry_time = datetime.fromisoformat(entry_time_str)
+                            # 检查是否已存在（避免重复）
+                            conn = sqlite3.connect(self.trade_db.db_path)
+                            cursor = conn.cursor()
+                            cursor.execute('SELECT id FROM trades WHERE exit_order_id = ?', (order_id,))
+                            existing = cursor.fetchone()
                             
-                            # 判断是否为平仓订单
-                            is_close_order = (
-                                (db_side == 'long' and order_side == 'sell') or
-                                (db_side == 'short' and order_side == 'buy')
-                            )
-                            
-                            if is_close_order and order_time > entry_time:
-                                # 这是一个平仓订单
-                                api_price = order_price
-                                
-                                # 计算实际盈亏
-                                if db_side == 'long':
-                                    realized_pnl = (api_price - entry_price) * order_amount
-                                else:
-                                    realized_pnl = (entry_price - api_price) * order_amount
-                                
-                                # 更新数据库
-                                import sqlite3
-                                conn = sqlite3.connect(self.trade_db.db_path)
-                                cursor = conn.cursor()
-                                
-                                cursor.execute("""
-                                    UPDATE trades 
-                                    SET status = 'closed',
-                                        exit_price = ?,
-                                        exit_time = ?,
-                                        realized_pnl = ?
-                                    WHERE id = ?
-                                """, (api_price, order_time.isoformat(), realized_pnl, db_trade['id']))
-                                
-                                conn.commit()
+                            if existing:
                                 conn.close()
-                                
-                                print(f"  [完成] 同步成功 ID#{db_trade['id']}: 开仓${entry_price:,.2f} → 平仓${api_price:,.2f} 盈亏${realized_pnl:+,.2f}")
-                                synced_count += 1
-                                break
-                
+                                continue  # 已存在，跳过
+                            
+                            # 构建交易记录
+                            side = 'long' if info.get('posSide') == 'long' else 'short'
+                            signal = 'BUY' if side == 'long' else 'SELL'
+                            price = float(order.get('price', 0))
+                            quantity = float(order.get('amount', 0))
+                            order_time = datetime.fromtimestamp(order.get('timestamp', 0) / 1000)
+                            
+                            # 计算盈亏百分比（使用杠杆10倍）
+                            pnl_percent = (fill_pnl / (price * quantity)) * 100 * 10
+                            
+                            # 插入数据库（作为已完成的交易）
+                            cursor.execute('''
+                            INSERT INTO trades (
+                                symbol, signal, side, entry_price, exit_price, quantity, leverage,
+                                open_time, close_time, realized_pnl, pnl_percent,
+                                exit_order_id, status, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ''', (
+                                symbol, signal, side, price, price, quantity, 10,
+                                order_time.isoformat(), order_time.isoformat(),
+                                fill_pnl, pnl_percent, order_id, 'CLOSED',
+                                order_time.isoformat(), order_time.isoformat()
+                            ))
+                            
+                            conn.commit()
+                            conn.close()
+                            synced_count += 1
+                            
+                        except Exception as e:
+                            print(f"    [警告] 处理订单失败: {e}")
+                            continue
+                    
                 except Exception as e:
-                    # 单个币种失败不影响其他币种
                     print(f"  [警告] {symbol} 同步失败: {e}")
+                    continue
             
             if synced_count > 0:
-                print(f"[完成] 同步完成，更新了{synced_count}笔交易\n")
-                    
+                print(f"[同步] 完成！共同步{synced_count}笔历史交易")
+            else:
+                print(f"[同步] 没有新的历史交易需要同步")
+            
+            return synced_count
+            
         except Exception as e:
-            # 同步失败不影响主流程
-            print(f"[警告] API同步失败: {e}\n")
+            print(f"[失败] 同步失败: {e}")
+            return 0
     
-    def get_recent_filled_orders(self, symbol: str, days: int = 7) -> List[Dict]:
-        """
-        获取最近N天的成交订单
-        
-        Args:
-            symbol: 交易对符号
-            days: 天数
-            
-        Returns:
-            订单列表
-        """
-        try:
-            since = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
-            orders = self.data_fetcher.exchange.fetch_my_trades(symbol=symbol, since=since)
-            return orders if orders else []
-        except Exception as e:
-            print(f"[警告] 获取成交订单失败: {e}")
-            return []
-    
-    def match_orders_to_trades(self, orders: List[Dict], trades: List[Dict]) -> Dict:
-        """
-        匹配订单和交易记录
-        
-        Args:
-            orders: API订单列表
-            trades: 数据库交易列表
-            
-        Returns:
-            匹配结果
-        """
-        matched = []
-        unmatched_orders = []
-        unmatched_trades = []
-        
-        for order in orders:
-            found = False
-            for trade in trades:
-                if self._is_matching_order(order, trade):
-                    matched.append({
-                        'order': order,
-                        'trade': trade
-                    })
-                    found = True
-                    break
-            
-            if not found:
-                unmatched_orders.append(order)
-        
-        # 找出未匹配的交易
-        matched_trade_ids = {m['trade']['id'] for m in matched}
-        unmatched_trades = [t for t in trades if t['id'] not in matched_trade_ids]
-        
-        return {
-            'matched': matched,
-            'unmatched_orders': unmatched_orders,
-            'unmatched_trades': unmatched_trades
-        }
-    
-    def _is_matching_order(self, order: Dict, trade: Dict) -> bool:
-        """
-        判断订单是否匹配交易记录
-        
-        Args:
-            order: API订单
-            trade: 数据库交易
-            
-        Returns:
-            是否匹配
-        """
-        # 检查币种
-        if order.get('symbol') != trade.get('symbol'):
-            return False
-        
-        # 检查时间（订单时间应该在交易开仓时间之后）
-        order_time = datetime.fromtimestamp(order.get('timestamp', 0) / 1000)
-        entry_time_str = trade.get('entry_time', '')
-        if not entry_time_str:
-            return False  # 没有entry_time，无法判断
-        
-        entry_time = datetime.fromisoformat(entry_time_str)
-        if order_time <= entry_time:
-            return False
-        
-        # 检查方向（平仓订单应该与持仓方向相反）
-        order_side = order.get('side')
-        trade_side = trade.get('side')
-        
-        is_close_order = (
-            (trade_side == 'long' and order_side == 'sell') or
-            (trade_side == 'short' and order_side == 'buy')
-        )
-        
-        return is_close_order

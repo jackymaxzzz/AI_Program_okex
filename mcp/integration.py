@@ -150,8 +150,37 @@ class MCPTradingMemory:
             if len(self.failed_trades) > 50:
                 self.failed_trades = self.failed_trades[-50:]
             
+            # 自动保存到文件
+            self._auto_save()
+            
         except Exception as e:
             print(f"[警告] MCP记录失败交易失败: {e}")
+    
+    def _auto_save(self):
+        """自动保存MCP数据到文件"""
+        try:
+            import json
+            import os
+            
+            data_dir = "data/mcp"
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir)
+            
+            filepath = os.path.join(data_dir, "mcp_memory.json")
+            
+            export_data = {
+                'successful_trades': self.successful_trades,
+                'failed_trades': self.failed_trades,
+                'long_term_memory': self.long_term_memory,
+                'strategy_stats': self.strategy_stats,
+                'last_updated': datetime.now().isoformat()
+            }
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+                
+        except Exception as e:
+            pass  # 静默失败，不影响主流程
     
     def add_long_term_lesson(self, lesson: Dict):
         """
@@ -235,19 +264,24 @@ class MCPTradingMemory:
                 'conditions': practice.get('conditions', ''),
                 'timestamp': datetime.now().isoformat()
             }
+            # 添加到成功交易列表
+            self.successful_trades.append(practice_record)
             
-            self.best_practices.append(practice_record)
-            
-            # 保留最有效的实践
-            if len(self.best_practices) > 30:
-                self.best_practices.sort(
-                    key=lambda x: x.get('success_rate', 0) * x.get('avg_profit', 0),
-                    reverse=True
-                )
-                self.best_practices = self.best_practices[:30]
+            # 保持列表大小
+            if len(self.successful_trades) > self.max_trades:
+                # 移除最旧的记录到长期记忆
+                oldest = self.successful_trades.pop(0)
+                self.long_term_memory.append(oldest)
                 
+                # 保持长期记忆大小
+                if len(self.long_term_memory) > self.max_long_term:
+                    self.long_term_memory.pop(0)
+            
+            # 自动保存到文件
+            self._auto_save()
+            
         except Exception as e:
-            print(f"[警告] 记录最佳实践失败: {e}")
+            print(f"[警告] MCP记录最佳实践失败: {e}")
     
     def record_market_pattern(self, symbol: str, pattern: Dict):
         """
@@ -667,23 +701,27 @@ class MCPFileSystem:
         try:
             import os
             
-            data_dir = os.path.join(self.base_path, 'data')
-            if not os.path.exists(data_dir):
-                # 首次运行，数据目录不存在是正常的
-                print("📂 首次运行，将创建新的MCP记忆")
-                return
-            
-            # 如果没有指定文件名，使用最新的
-            if not filename:
-                files = [f for f in os.listdir(data_dir) if f.startswith('mcp_memory_') and f.endswith('.json')]
-                if not files:
-                    # 没有历史记忆文件，这也是正常的
-                    print("📂 没有找到历史记忆，将创建新的MCP记忆")
+            # 优先加载自动保存的文件
+            auto_save_path = os.path.join(self.base_path, 'data/mcp/mcp_memory.json')
+            if os.path.exists(auto_save_path):
+                filepath = auto_save_path
+                print(f"📂 从自动保存文件加载MCP记忆")
+            else:
+                # 否则查找旧的导出文件
+                data_dir = os.path.join(self.base_path, 'data')
+                if not os.path.exists(data_dir):
+                    print("📂 首次运行，将创建新的MCP记忆")
                     return
-                files.sort(reverse=True)
-                filename = files[0]
-            
-            filepath = os.path.join(data_dir, filename)
+                
+                if not filename:
+                    files = [f for f in os.listdir(data_dir) if f.startswith('mcp_memory_') and f.endswith('.json')]
+                    if not files:
+                        print("📂 没有找到历史记忆，将创建新的MCP记忆")
+                        return
+                    files.sort(reverse=True)
+                    filename = files[0]
+                
+                filepath = os.path.join(data_dir, filename)
             
             with open(filepath, 'r', encoding='utf-8') as f:
                 import_data = json.load(f)
