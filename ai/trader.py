@@ -705,25 +705,66 @@ XRP: 1张=100个，amount=0.1代表10个XRP
             # 调试：显示MCP记录数量
             success_count = len(self.mcp_memory.successful_trades)
             failed_count = len(self.mcp_memory.failed_trades)
+            total_count = success_count + failed_count
+            
             print(f"\n[MCP状态检查]")
             print(f"  MCP启用: {self.mcp_memory.enabled}")
-            print(f"  成功交易: {success_count}笔")
-            print(f"  失败交易: {failed_count}笔")
+            print(f"  总交易: {total_count}笔")
+            print(f"  成功: {success_count}笔 | 失败: {failed_count}笔")
+            
+            if total_count > 0:
+                win_rate = (success_count / total_count) * 100
+                print(f"  胜率: {win_rate:.1f}%")
+                
+                # 统计做多做空
+                long_success = sum(1 for t in self.mcp_memory.successful_trades if t.get('side') == 'long')
+                long_failed = sum(1 for t in self.mcp_memory.failed_trades if t.get('side') == 'long')
+                short_success = sum(1 for t in self.mcp_memory.successful_trades if t.get('side') == 'short')
+                short_failed = sum(1 for t in self.mcp_memory.failed_trades if t.get('side') == 'short')
+                
+                long_total = long_success + long_failed
+                short_total = short_success + short_failed
+                
+                if long_total > 0:
+                    long_win_rate = (long_success / long_total) * 100
+                    print(f"  做多: {long_total}笔 (胜率{long_win_rate:.1f}%)")
+                if short_total > 0:
+                    short_win_rate = (short_success / short_total) * 100
+                    print(f"  做空: {short_total}笔 (胜率{short_win_rate:.1f}%)")
+                
+                # 计算总盈亏
+                total_pnl = sum(t.get('realized_pnl', 0) for t in self.mcp_memory.successful_trades)
+                total_pnl += sum(t.get('realized_pnl', 0) for t in self.mcp_memory.failed_trades)
+                print(f"  累计盈亏: ${total_pnl:.2f}")
             
             # 显示最近3笔交易
             if success_count > 0:
                 print(f"  最近成功:")
                 for trade in self.mcp_memory.successful_trades[-3:]:
-                    print(f"    - {trade.get('symbol', 'N/A')}: {trade.get('pnl_percent', 0):.2f}%")
+                    side = trade.get('side', 'N/A')
+                    print(f"    - {trade.get('symbol', 'N/A')} {side}: {trade.get('pnl_percent', 0):.2f}%")
             if failed_count > 0:
                 print(f"  最近失败:")
                 for trade in self.mcp_memory.failed_trades[-3:]:
-                    print(f"    - {trade.get('symbol', 'N/A')}: {trade.get('pnl_percent', 0):.2f}%")
+                    side = trade.get('side', 'N/A')
+                    print(f"    - {trade.get('symbol', 'N/A')} {side}: {trade.get('pnl_percent', 0):.2f}%")
+            
+            # 构建统计信息发送给AI
+            if total_count > 0:
+                stats_text = f"\n【你的交易统计】\n"
+                stats_text += f"总交易: {total_count}笔 | 胜率: {win_rate:.1f}%\n"
+                if long_total > 0:
+                    stats_text += f"做多: {long_total}笔 (成功{long_success}笔, 失败{long_failed}笔, 胜率{long_win_rate:.1f}%)\n"
+                if short_total > 0:
+                    stats_text += f"做空: {short_total}笔 (成功{short_success}笔, 失败{short_failed}笔, 胜率{short_win_rate:.1f}%)\n"
+                stats_text += f"累计盈亏: ${total_pnl:.2f}\n"
+                
+                mcp_insights = stats_text
             
             # 获取短期交易洞察
             all_insights = self.mcp_memory.get_all_insights()
             if all_insights:
-                mcp_insights = all_insights + "\n"
+                mcp_insights += all_insights + "\n"
                 print(f"  洞察已生成: {len(all_insights)}字符")
             else:
                 print(f"  洞察: 无")
