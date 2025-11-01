@@ -705,17 +705,38 @@ XRP: 1张=100个，amount=0.1代表10个XRP
             # 调试：显示MCP记录数量
             success_count = len(self.mcp_memory.successful_trades)
             failed_count = len(self.mcp_memory.failed_trades)
-            print(f"[MCP] 历史记录: 成功{success_count}笔, 失败{failed_count}笔")
+            print(f"\n[MCP状态检查]")
+            print(f"  MCP启用: {self.mcp_memory.enabled}")
+            print(f"  成功交易: {success_count}笔")
+            print(f"  失败交易: {failed_count}笔")
+            
+            # 显示最近3笔交易
+            if success_count > 0:
+                print(f"  最近成功:")
+                for trade in self.mcp_memory.successful_trades[-3:]:
+                    print(f"    - {trade.get('symbol', 'N/A')}: {trade.get('pnl_percent', 0):.2f}%")
+            if failed_count > 0:
+                print(f"  最近失败:")
+                for trade in self.mcp_memory.failed_trades[-3:]:
+                    print(f"    - {trade.get('symbol', 'N/A')}: {trade.get('pnl_percent', 0):.2f}%")
             
             # 获取短期交易洞察
             all_insights = self.mcp_memory.get_all_insights()
             if all_insights:
                 mcp_insights = all_insights + "\n"
+                print(f"  洞察已生成: {len(all_insights)}字符")
+            else:
+                print(f"  洞察: 无")
             
             # 获取长期记忆洞察
             long_term_insights = self.mcp_memory.get_long_term_insights()
             if long_term_insights:
                 mcp_insights += long_term_insights + "\n"
+                print(f"  长期记忆: {len(long_term_insights)}字符")
+            else:
+                print(f"  长期记忆: 无")
+            
+            print(f"[MCP] 总计发送给AI: {len(mcp_insights)}字符\n")
         
         prompt = f"""{trading_stats}【多币种市场分析 - {timestamp} {cycle_info}】
 {account_overview}
