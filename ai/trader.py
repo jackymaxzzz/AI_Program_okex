@@ -664,14 +664,23 @@ XRP: 1张=100个，amount=0.1代表10个XRP
         if len(self.conversation_history) > 2 and self.current_cycle <= 3:
             history_reminder = "\n注意：如改变观点请说明原因\n"
         
-        # 添加待确认的开仓决策提示
+        # 添加待确认的开仓决策提示（包含上次决策的详细信息）
         pending_reminder = ""
         if hasattr(self, 'pending_decisions') and self.pending_decisions:
             pending_reminder = "\n[提醒] 待确认的开仓信号：\n"
             for symbol, info in self.pending_decisions.items():
                 signal = info.get('signal')
                 cycle = info.get('cycle')
-                pending_reminder += f"- {symbol} {signal}（周期#{cycle}首次建议）\n"
+                decision = info.get('decision', {})
+                
+                # 显示上次的完整决策信息
+                pending_reminder += f"\n{symbol} {signal}（周期#{cycle}首次建议）：\n"
+                pending_reminder += f"  信心度: {decision.get('confidence', 'N/A')}\n"
+                pending_reminder += f"  理由: {decision.get('reason', 'N/A')}\n"
+                pending_reminder += f"  止损: ${decision.get('stop_loss', 0):.2f}\n"
+                pending_reminder += f"  止盈: ${decision.get('take_profit', 0):.2f}\n"
+                pending_reminder += f"  数量: {decision.get('amount', 0)}\n"
+            
             pending_reminder += """
 这些是首次信号，需要本轮再次确认才会执行：
 - 如果你仍然认为应该开仓，请在本轮决策中再次给出相同的信号
