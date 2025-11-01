@@ -1,0 +1,1548 @@
+"""
+简化版主程序 - 完全信任AI的判断
+"""
+import time
+from datetime import datetime
+from typing import Dict, Optional
+from openai import OpenAI
+
+from config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, TRADING_CONFIG, validate_config
+from pure_ai_trader import PureAITrader
+from utils.data_fetcher import DataFetcher
+from utils.indicators import calculate_technical_indicators, format_market_data
+from trade_database import TradeDatabase
+from mcp_sync import MCPDatabaseSync
+from trading_executor import TradingExecutor
+from position_manager import PositionManager
+from order_sync import OrderSync
+
+
+class SimpleAITradingBot:
+    """简化版AI交易机器人 - 纯AI驱动"""
+    
+    def __init__(self):
+        """初始化交易机器人"""
+        print(f"\n{'='*70}")
+        print("[AI] 初始化AI交易机器人")
+        print(f"{'='*70}\n")
+        
+        # 验证配置
+        validate_config()
+        
+        # 初始化组件
+        self.ai_client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
+        self.ai_trader = PureAITrader(self.ai_client)
+        self.data_fetcher = DataFetcher()
+        self.trade_db = TradeDatabase()
+        
+        # 初始化MCP与数据库同步器
+        self.mcp_sync = MCPDatabaseSync(self.ai_trader.mcp_memory, self.trade_db)
+        print("[同步] MCP数据库同步器已初始化")
+        
+        # 初始化新模块
+        self.trading_executor = TradingExecutor(self.data_fetcher, self.trade_db)
+        self.position_manager = PositionManager(self.data_fetcher, self.trade_db)
+        self.order_sync = OrderSync(self.data_fetcher, self.trade_db)
+        
+        # 加载历史MCP记忆
+        try:
+            self.ai_trader.mcp_filesystem.import_mcp_memory(self.ai_trader.mcp_memory)
+            print("[加载] MCP历史记忆已加载")
+        except Exception as e:
+            print(f"[警告] 加载MCP记忆失败: {e}")
+        
+        # 状态
+        self.current_trade_id = None
+        self.cycle_count = 0
+        
+        # 指数退避相关
+        self.consecutive_holds = 0  # 连续HOLD次数
+        self.skip_cycles = 0  # 需要跳过的周期数
+        
+        # 安全机制：记录待确认的开仓决策（支持多个币种）
+        self.pending_open_decisions = {}  # {'BTC': {'signal': 'BUY', 'cycle': 123}, 'ETH': {...}}
+        
+        print("\n" + "="*70)
+        print("初始化完成")
+        print("="*70 + "\n")
+    
+    def run_cycle(self):
+        """运行一个交易周期"""
+        try:
+            self.cycle_count += 1
+            
+            # 指数退避：如果需要跳过本周期
+            if self.skip_cycles > 0:
+                self.skip_cycles -= 1
+                print(f"\n{'='*70}")
+                print(f"⏭️  周期 #{self.cycle_count} - 跳过AI分析（连续HOLD优化）")
+                print(f"   剩余跳过周期: {self.skip_cycles}")
+                print(f"{'='*70}\n")
+                return
+            
+            print(f"\n{'='*70}")
+            print(f"周期 #{self.cycle_count} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"{'='*70}\n")
+            
+            # 1. 获取多币种市场数据
+            all_market_data = {}
+            
+            for symbol in TRADING_CONFIG['symbols']:
+                coin = symbol.split('/')[0]  # 提取币种名称 (BTC, ETH)
+                # print(f"\n📡 获取{coin}数据...")  # 静默模式
+                
+                # 临时切换交易对
+                original_symbol = self.data_fetcher.symbol
+                self.data_fetcher.symbol = symbol
+                
+                # 获取15分钟数据
+                df_15m = self.data_fetcher.fetch_ohlcv('primary')
+                if df_15m is None:
+                    print(f"[失败] {coin} 15分钟数据获取失败")
+                    self.data_fetcher.symbol = original_symbol
+                    continue
+                
+                # 获取4小时数据
+                df_4h = self.data_fetcher.fetch_ohlcv('long')
+                
+                # 获取日线数据（7天）
+                df_1d = self.data_fetcher.fetch_ohlcv('daily')
+                
+                # 计算技术指标
+                df_15m = calculate_technical_indicators(df_15m)
+                if df_4h is not None:
+                    df_4h = calculate_technical_indicators(df_4h)
+                if df_1d is not None:
+                    df_1d = calculate_technical_indicators(df_1d)
+                
+                # 格式化数据
+                coin_data = format_market_data(df_15m)
+                if df_4h is not None:
+                    coin_data['long_timeframe'] = format_market_data(df_4h)
+                if df_1d is not None:
+                    coin_data['daily_timeframe'] = format_market_data(df_1d)
+                
+                all_market_data[coin] = coin_data
+                
+                # 根据价格大小动态调整显示精度
+                price = coin_data['price']
+                if price < 0.01:
+                    price_str = f"${price:.6f}"
+                elif price < 1:
+                    price_str = f"${price:.4f}"
+                elif price < 100:
+                    price_str = f"${price:,.2f}"
+                else:
+                    price_str = f"${price:,.0f}"
+                print(f"{coin}当前价格: {price_str}")
+                
+                # 恢复原始交易对
+                self.data_fetcher.symbol = original_symbol
+            
+            if not all_market_data:
+                print("[失败] 所有币种数据获取失败，跳过本周期")
+                return
+            
+            # 4. 获取账户信息
+            balance_info = self.data_fetcher.fetch_balance()
+            available_balance = 0  # 可用余额
+            if balance_info:
+                # 直接从OKX获取账户权益
+                # 使用info字段中的totalEq（账户总权益）
+                if 'info' in balance_info and 'data' in balance_info['info']:
+                    data = balance_info['info']['data']
+                    if data and len(data) > 0:
+                        # totalEq是账户总权益（包含所有持仓的未实现盈亏）
+                        total_eq = data[0].get('totalEq', '0')
+                        balance = float(total_eq) if total_eq else 0
+                        
+                        # availEq在账户级别可能是空的，需要从details中获取USDT的可用余额
+                        avail_eq = data[0].get('availEq', '0')
+                        if not avail_eq or avail_eq == '':
+                            # 从details中查找USDT的availEq
+                            details = data[0].get('details', [])
+                            for detail in details:
+                                if detail.get('ccy') == 'USDT':
+                                    avail_eq = detail.get('availEq', '0')
+                                    break
+                        
+                        available_balance = float(avail_eq) if avail_eq else 0
+                    else:
+                        balance = balance_info.get('USDT', {}).get('total', 0)
+                        available_balance = balance_info.get('USDT', {}).get('free', 0)
+                else:
+                    balance = balance_info.get('USDT', {}).get('total', 0)
+                    available_balance = balance_info.get('USDT', {}).get('free', 0)
+            else:
+                balance = TRADING_CONFIG.get('initial_balance', 200.0)
+                available_balance = balance
+            
+            # 5. 获取所有持仓并同步数据库
+            all_positions = self.data_fetcher.get_all_positions()
+            current_position = all_positions[0] if all_positions else None  # 保持向后兼容
+            
+            # 5.1 从API同步历史成交到数据库
+            self.order_sync.sync_filled_orders_from_api()
+            
+            # 5.2 同步数据库：关闭所有不在持仓中的交易
+            self.position_manager.sync_database_with_positions(current_position)
+            
+            # 显示所有持仓
+            if all_positions:
+                print(f"当前持仓数量: {len(all_positions)}")
+                for pos in all_positions:
+                    amount = pos.get('btc_amount', 0)
+                    if amount < 1:
+                        amount_str = f"{amount:.4f}"
+                    else:
+                        amount_str = f"{amount:.2f}"
+                    
+                    print(f"   - {pos.get('symbol')} {pos.get('side')} {amount_str} | 盈亏: ${pos.get('unrealized_pnl', 0):,.2f}")
+            # else:
+            #     print("[数据] 当前无持仓")  # 静默模式，无持仓时不打印
+            
+            # 5.5 设置账户统计（如果有的话）
+            # TODO: 从API获取真实的账户统计
+            # 示例数据（替换为实际API调用）:
+            # self.ai_trader.set_account_stats(
+            #     total_return_pct=116.25,
+            #     total_value=21624.9,
+            #     sharpe_ratio=0.468,
+            #     available_cash=13654.1,
+            #     all_positions=[
+            #         {'symbol': 'ETH', 'quantity': 5.74, 'entry_price': 4189.12, ...},
+            #         {'symbol': 'BTC', 'quantity': 0.12, 'entry_price': 107343.0, ...},
+            #         ...
+            #     ]
+            # )
+            
+            # 6. AI分析并决策
+            print("\n[AI] AI分析中...\n")
+            
+            # 传递当前交易ID、周期号和待确认决策给AI
+            self.ai_trader.current_trade_id = self.current_trade_id
+            self.ai_trader.current_cycle = self.cycle_count
+            self.ai_trader.pending_decisions = self.pending_open_decisions
+            self.ai_trader.available_balance = available_balance  # 传递可用余额
+            
+            decision = self.ai_trader.analyze_multi_coins(
+                all_coins_data=all_market_data,
+                account_balance=balance,
+                all_positions=all_positions
+            )
+            
+            # 7. 显示决策
+            self._display_decision(decision)
+            
+            # 8. 检测连续HOLD并应用指数退避
+            signal = decision.get('signal', 'HOLD')
+            has_position = current_position is not None
+            
+            if signal == 'HOLD' and not has_position and TRADING_CONFIG.get('backoff_enabled', True):
+                # 无持仓且HOLD，且启用了退避
+                self.consecutive_holds += 1
+                
+                # 指数退避策略
+                threshold = TRADING_CONFIG.get('backoff_threshold', 3)
+                max_skip = TRADING_CONFIG.get('backoff_max_skip', 8)
+                
+                if self.consecutive_holds >= threshold:
+                    # 达到阈值后开始退避
+                    # 退避周期 = min(2^(n-threshold+1), max_skip)
+                    self.skip_cycles = min(2 ** (self.consecutive_holds - threshold + 1), max_skip)
+                    print(f"\n💤 连续{self.consecutive_holds}次HOLD，启动指数退避")
+                    print(f"   下次AI分析将在{self.skip_cycles + 1}个周期后")
+            else:
+                # 有交易信号或有持仓，重置计数
+                if self.consecutive_holds > 0:
+                    print(f"\n[同步] 检测到交易信号，重置退避计数")
+                self.consecutive_holds = 0
+                self.skip_cycles = 0
+            
+            # 9. 执行主要交易决策
+            if decision.get('signal') != 'HOLD':
+                symbol = decision.get('symbol', 'BTC')
+                # 清理symbol格式，只保留币种名称
+                if '/' in symbol:
+                    symbol = symbol.split('/')[0]
+                coin_data = all_market_data.get(symbol, {})
+                self._execute_trade(decision, coin_data.get('price', 0), coin_data, all_market_data)
+            
+            # 10. 执行持仓管理建议（包括平仓、调整止损止盈、以及可能的新开仓）
+            position_reviews = decision.get('position_reviews', [])
+            if position_reviews:
+                if not TRADING_CONFIG.get('test_mode', False):
+                    self._execute_position_reviews(position_reviews, all_market_data, all_positions)
+                else:
+                    print("\n🧪 测试模式：跳过持仓管理执行")
+            
+            print(f"\n{'='*70}")
+            print(f"周期 #{self.cycle_count} 完成")
+            print(f"{'='*70}\n")
+            
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            print(f"\n[失败] 周期执行出错: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _sync_filled_orders_from_api(self):
+        """从API同步最近的成交订单到数据库"""
+        try:
+            # 获取最近7天的成交订单
+            from datetime import datetime, timedelta
+            
+            # print("\n[同步] 开始从API同步历史成交...")  # 静默模式
+            
+            # 获取所有交易对的历史订单
+            synced_count = 0
+            for symbol in TRADING_CONFIG['symbols']:
+                try:
+                    # 获取最近的已成交订单（使用fetch_my_trades获取实际成交）
+                    trades = self.data_fetcher.exchange.fetch_my_trades(
+                        symbol=symbol,
+                        since=int((datetime.now() - timedelta(days=7)).timestamp() * 1000),
+                        limit=100
+                    )
+                    
+                    if not trades:
+                        continue
+                    
+                    # 先查找数据库中需要同步的记录
+                    import sqlite3
+                    conn = sqlite3.connect(self.trade_db.db_path)
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                    SELECT * FROM trades 
+                    WHERE symbol = ? AND (exit_price = 0 OR exit_price IS NULL)
+                    ORDER BY open_time DESC
+                    LIMIT 10
+                    ''', (symbol,))
+                    
+                    db_trades_to_sync = [dict(row) for row in cursor.fetchall()]
+                    conn.close()
+                    
+                    if not db_trades_to_sync:
+                        continue
+                    
+                    print(f"  {symbol}: API有{len(trades)}笔成交，数据库有{len(db_trades_to_sync)}笔待同步")
+                    
+                    # 按时间分组，找出开仓和平仓配对
+                    for api_trade in trades:
+                        api_side = api_trade.get('side')  # buy/sell
+                        api_price = api_trade.get('price', 0)
+                        api_amount = api_trade.get('amount', 0)
+                        api_time = datetime.fromtimestamp(api_trade.get('timestamp', 0) / 1000)
+                        
+                        # 遍历数据库中待同步的记录
+                        for db_trade in db_trades_to_sync:
+                                # 如果是平仓订单（方向相反），更新平仓信息
+                                db_side = db_trade.get('side', 'long')
+                                is_close_order = (db_side == 'long' and api_side == 'sell') or \
+                                               (db_side == 'short' and api_side == 'buy')
+                                
+                                if is_close_order:
+                                    # 计算盈亏
+                                    entry_price = db_trade.get('entry_price', 0)
+                                    quantity = db_trade.get('quantity', 0)
+                                    leverage = db_trade.get('leverage', 10)
+                                    
+                                    if entry_price and api_price and quantity:
+                                        price_diff = api_price - entry_price if db_side == 'long' else entry_price - api_price
+                                        realized_pnl = price_diff * quantity * leverage
+                                        
+                                        # 更新数据库
+                                        import sqlite3
+                                        conn = sqlite3.connect(self.trade_db.db_path)
+                                        cursor = conn.cursor()
+                                        
+                                        cursor.execute('''
+                                        UPDATE trades SET
+                                            exit_price = ?,
+                                            close_time = ?,
+                                            realized_pnl = ?,
+                                            pnl_percent = ?,
+                                            status = 'CLOSED',
+                                            updated_at = datetime('now')
+                                        WHERE id = ?
+                                        ''', (
+                                            api_price,
+                                            api_time.isoformat(),
+                                            realized_pnl,
+                                            (price_diff / entry_price) * leverage * 100,
+                                            db_trade['id']
+                                        ))
+                                        
+                                        # 计算持仓时长
+                                        open_time_str = db_trade.get('open_time')
+                                        if open_time_str and api_time:
+                                            try:
+                                                open_time = datetime.fromisoformat(open_time_str)
+                                                duration_seconds = (api_time - open_time).total_seconds()
+                                                
+                                                cursor.execute('''
+                                                UPDATE trades SET
+                                                    holding_duration_seconds = ?
+                                                WHERE id = ?
+                                                ''', (duration_seconds, db_trade['id']))
+                                            except:
+                                                pass
+                                        
+                                        conn.commit()
+                                        conn.close()
+                                        
+                                        print(f"  [完成] 同步成功 ID#{db_trade['id']}: 开仓${entry_price:,.2f} → 平仓${api_price:,.2f} 盈亏${realized_pnl:+,.2f}")
+                                        synced_count += 1
+                                        break
+                
+                except Exception as e:
+                    # 单个币种失败不影响其他币种
+                    print(f"  [警告] {symbol} 同步失败: {e}")
+            
+            if synced_count > 0:
+                print(f"[完成] 同步完成，更新了{synced_count}笔交易\n")
+            # else:
+            #     print("[信息]  没有需要同步的交易\n")  # 静默模式，无需打印
+                    
+        except Exception as e:
+            # 同步失败不影响主流程
+            print(f"[警告] API同步失败: {e}\n")
+    
+    def _sync_database_with_positions(self, current_position: Optional[Dict]):
+        """
+        同步数据库与实际持仓
+        关闭所有在数据库中标记为open但实际已平仓的交易
+        """
+        try:
+            # 获取所有未平仓的交易
+            open_trades = self.trade_db.get_open_trades()
+            
+            if not open_trades:
+                return
+            
+            # 如果没有实际持仓，关闭所有数据库中的未平仓交易
+            if not current_position:
+                for trade in open_trades:
+                    # 获取当前市场价格作为平仓价
+                    try:
+                        symbol = trade['symbol']
+                        # 清理symbol格式
+                        coin = symbol.split('/')[0]
+                        symbol_clean = f"{coin}/USDT:USDT"
+                        # 使用ccxt的fetch_ticker获取当前价格
+                        ticker = self.data_fetcher.exchange.fetch_ticker(symbol_clean)
+                        exit_price = ticker['last'] if ticker else trade.get('entry_price', 0)
+                        
+                        # 计算盈亏
+                        entry_price = trade.get('entry_price', 0)
+                        quantity = trade.get('quantity', 0)
+                        leverage = trade.get('leverage', 10)
+                        
+                        if entry_price and exit_price and quantity:
+                            price_change_pct = (exit_price - entry_price) / entry_price
+                            realized_pnl = price_change_pct * entry_price * quantity * leverage
+                        else:
+                            realized_pnl = 0
+                        
+                        print(f"[同步] 同步数据库: 关闭交易 #{trade['id']} ({trade['symbol']}) - 平仓价${exit_price:,.2f}")
+                    except Exception as e:
+                        print(f"[警告] 获取平仓价失败: {e}")
+                        exit_price = trade.get('entry_price', 0)
+                        realized_pnl = 0
+                    
+                    self.trade_db.close_trade(
+                        trade_id=trade['id'],
+                        exit_price=exit_price,
+                        realized_pnl=realized_pnl,
+                        ai_decision={'reason': '系统同步：实际已平仓'}
+                    )
+                return
+            
+            # 如果有持仓，关闭不匹配的交易
+            current_symbol = current_position.get('symbol')
+            for trade in open_trades:
+                if trade['symbol'] != current_symbol:
+                    # 获取当前市场价格作为平仓价
+                    try:
+                        symbol = trade['symbol']
+                        # 清理symbol格式
+                        coin = symbol.split('/')[0]
+                        symbol_clean = f"{coin}/USDT:USDT"
+                        # 使用ccxt的fetch_ticker获取当前价格
+                        ticker = self.data_fetcher.exchange.fetch_ticker(symbol_clean)
+                        exit_price = ticker['last'] if ticker else trade.get('entry_price', 0)
+                        
+                        # 计算盈亏
+                        entry_price = trade.get('entry_price', 0)
+                        quantity = trade.get('quantity', 0)
+                        leverage = trade.get('leverage', 10)
+                        
+                        if entry_price and exit_price and quantity:
+                            price_change_pct = (exit_price - entry_price) / entry_price
+                            realized_pnl = price_change_pct * entry_price * quantity * leverage
+                        else:
+                            realized_pnl = 0
+                        
+                        print(f"[同步] 同步数据库: 关闭交易 #{trade['id']} ({trade['symbol']}) - 平仓价${exit_price:,.2f}")
+                    except Exception as e:
+                        print(f"[警告] 获取平仓价失败: {e}")
+                        exit_price = trade.get('entry_price', 0)
+                        realized_pnl = 0
+                    
+                    self.trade_db.close_trade(
+                        trade_id=trade['id'],
+                        exit_price=exit_price,
+                        realized_pnl=realized_pnl,
+                        ai_decision={'reason': '系统同步：币种不匹配'}
+                    )
+        except Exception as e:
+            print(f"[警告] 数据库同步失败: {e}")
+    
+    def _display_decision(self, decision: Dict):
+        """显示AI决策"""
+        print(f"\n{'─'*70}")
+        print("AI决策结果")
+        print(f"{'─'*70}")
+        
+        
+        signal = decision.get('signal', 'HOLD')
+        confidence = decision.get('confidence', 'LOW')
+        symbol = decision.get('symbol', 'N/A')
+        
+        print(f"币种: {symbol}")
+        print(f"信号: {signal}")
+        print(f"信心度: {confidence}")
+        print(f"理由: {decision.get('reason', 'N/A')}")
+        
+        # 持仓评估（新格式）
+        position_reviews = decision.get('position_reviews', [])
+        if position_reviews:
+            print(f"\n{'─'*70}")
+            print("持仓评估")
+            print(f"{'─'*70}")
+            
+            
+            for i, review in enumerate(position_reviews, 1):
+                symbol = review.get('symbol', 'N/A')
+                action = review.get('action', 'N/A')
+                confidence = review.get('confidence', 'MEDIUM')
+                reason = review.get('reason', '')
+                
+                if i > 1:
+                    print(f"\n{'·'*70}")
+                
+                print(f"\n币种: {symbol}")
+                print(f"建议: {action}")
+                print(f"信心度: {confidence}")
+                
+                # 显示止损止盈建议（支持多种字段名）
+                suggested_sl = review.get('new_stop_loss') or review.get('suggested_stop_loss') or review.get('stop_loss')
+                suggested_tp = review.get('new_take_profit') or review.get('suggested_take_profit') or review.get('take_profit')
+                
+                if suggested_sl:
+                    print(f"止损: ${suggested_sl:,.2f}")
+                if suggested_tp:
+                    print(f"止盈: ${suggested_tp:,.2f}")
+                if review.get('amount'):
+                    print(f"数量: {review.get('amount')}")
+                
+                if reason:
+                    print(f"\n分析:")
+                    # 自动换行显示原因
+                    for line in reason.split('\n'):
+                        if line.strip():
+                            print(f"   {line.strip()}")
+        
+        # 兼容旧格式的持仓管理
+        pos_mgmt = decision.get('position_management', {})
+        if pos_mgmt and self.current_trade_id and not position_reviews:
+            action = pos_mgmt.get('current_position_action', 'N/A')
+            print(f"\n持仓管理:")
+            print(f"   建议: {action}")
+            if pos_mgmt.get('current_position_reason'):
+                print(f"   原因: {pos_mgmt.get('current_position_reason')}")
+        
+        if decision.get('stop_loss'):
+            print(f"\n止损: ${decision.get('stop_loss'):,.2f}")
+        if decision.get('take_profit'):
+            print(f"止盈: ${decision.get('take_profit'):,.2f}")
+        if decision.get('amount'):
+            print(f"数量: {decision.get('amount')}")
+        
+        if decision.get('think'):
+            print(f"\nAI思考过程:")
+            # 完整显示AI思考，不截断
+            think_text = decision.get('think')
+            for line in think_text.split('\n'):
+                print(f"   {line}")
+        
+        print(f"\nToken消耗: {decision.get('tokens_used', 0)}")
+        
+        # 显示响应时间
+        response_time = decision.get('response_time', 0)
+        if response_time > 0:
+            print(f"响应耗时: {response_time:.2f}秒")
+        
+        print(f"{'─'*70}\n")
+    
+    def _execute_trade(self, decision: Dict, current_price: float, market_data: Dict, all_market_data: Dict = None):
+        """执行交易"""
+        signal = decision.get('signal')
+        symbol_coin = decision.get('symbol', 'BTC')
+        
+        # 处理CLOSE_ALL信号（关闭所有持仓）
+        if signal == 'CLOSE_ALL':
+            print(f"\n{'='*70}")
+            print("🚨 执行CLOSE_ALL：关闭所有持仓")
+            print(f"{'='*70}")
+            
+            # 清除所有待确认的开仓决策
+            if self.pending_open_decisions:
+                print(f"[同步] 清除所有待确认的开仓决策")
+                self.pending_open_decisions.clear()
+            
+            # 获取所有持仓
+            all_positions = []
+            try:
+                if not TRADING_CONFIG.get('test_mode', True):
+                    all_positions = self.data_fetcher.get_all_positions()
+            except Exception as e:
+                print(f"[警告] 获取持仓失败: {e}")
+            
+            if not all_positions:
+                print("[信息]  当前无持仓，无需平仓")
+                return
+            
+            # 逐个平仓
+            for position in all_positions:
+                symbol_full = position.get('symbol')
+                symbol_coin_temp = symbol_full.split('/')[0] if '/' in symbol_full else symbol_full
+                
+                print(f"\n📤 平仓 {symbol_coin_temp}...")
+                
+                # 获取该币种的价格
+                coin_data = all_market_data.get(symbol_coin_temp, {}) if all_market_data else {}
+                close_price = coin_data.get('price', position.get('entry_price', 0))
+                
+                # 查找交易记录并平仓
+                try:
+                    open_trades = self.trade_db.get_open_trades(symbol_full)
+                    if open_trades:
+                        for trade in open_trades:
+                            realized_pnl = position.get('unrealized_pnl', 0)
+                            self.trade_db.close_trade(
+                                trade_id=trade['id'],
+                                exit_price=close_price,
+                                realized_pnl=realized_pnl,
+                                ai_decision=decision
+                            )
+                            print(f"[完成] {symbol_coin} 平仓完成")
+                except Exception as e:
+                    print(f"[失败] {symbol_coin} 平仓失败: {e}")
+            
+            # 清空当前交易ID
+            self.current_trade_id = None
+            print(f"\n{'='*70}")
+            print("[完成] 所有持仓已平仓")
+            print(f"{'='*70}\n")
+            return
+        
+        # 清理symbol格式，只保留币种名称
+        if '/' in symbol_coin:
+            symbol_coin = symbol_coin.split('/')[0]
+        
+        symbol_full = f"{symbol_coin}/USDT:USDT"
+        
+        # 处理平仓（立即执行，不需要二次确认）
+        if signal == 'CLOSE' and self.current_trade_id:
+            # 清除该币种待确认的开仓决策
+            if symbol_coin in self.pending_open_decisions:
+                print(f"[同步] 清除待确认的开仓决策：{symbol_coin}")
+                del self.pending_open_decisions[symbol_coin]
+            # 平仓前先记录到数据库
+            if not TRADING_CONFIG.get('test_mode', True):
+                # 实盘模式：从API获取实际盈亏
+                current_position = self.data_fetcher.get_current_position()
+                realized_pnl = current_position.get('unrealized_pnl', 0) if current_position else 0
+            else:
+                # 测试模式：计算模拟盈亏
+                realized_pnl = 0
+            
+            self.trade_db.close_trade(
+                trade_id=self.current_trade_id,
+                exit_price=current_price,
+                realized_pnl=realized_pnl,
+                ai_decision=decision
+            )
+            self.current_trade_id = None
+            return
+        
+        # 处理HOLD信号（不做任何操作）
+        if signal == 'HOLD':
+            return
+        
+        # 处理开仓和加仓（需要二次确认）
+        if signal in ['BUY', 'SELL', 'ADD']:
+            # 安全机制：开仓需要二次确认
+            if TRADING_CONFIG.get('require_double_confirmation', True):
+                # 检查该币种是否有待确认的决策
+                if symbol_coin in self.pending_open_decisions:
+                    last_signal = self.pending_open_decisions[symbol_coin]['signal']
+                    last_cycle = self.pending_open_decisions[symbol_coin]['cycle']
+                    
+                    # 判断是否连续两次相同决策（必须是不同周期）
+                    is_same_decision = (
+                        last_signal == signal and
+                        self.cycle_count > last_cycle and  # 必须是不同周期
+                        self.cycle_count - last_cycle <= 2  # 允许间隔1个周期
+                    )
+                    
+                    if is_same_decision:
+                        print(f"[完成] 二次确认通过：{symbol_coin} {signal}（上次周期#{last_cycle}，本次周期#{self.cycle_count}）")
+                        # 确认通过，清除记录，执行交易
+                        del self.pending_open_decisions[symbol_coin]
+                    elif self.cycle_count == last_cycle:
+                        # 同一周期内的重复信号，跳过
+                        print(f"[信息]  {symbol_coin} {signal} 已在本周期记录，跳过重复")
+                        return
+                    else:
+                        print(f"[警告] 信号变化：{symbol_coin} {last_signal} → {signal}，重新等待确认")
+                        # 更新为新决策
+                        self.pending_open_decisions[symbol_coin] = {
+                            'signal': signal,
+                            'cycle': self.cycle_count
+                        }
+                        return
+                else:
+                    print(f"[警告] 首次开仓信号：{symbol_coin} {signal}，等待下次确认")
+                    self.pending_open_decisions[symbol_coin] = {
+                        'signal': signal,
+                        'cycle': self.cycle_count
+                    }
+                    return
+            
+            # 获取该币种的默认数量
+            default_amount = TRADING_CONFIG['amounts'].get(symbol_coin, 0.01)
+            actual_amount = decision.get('amount', default_amount)
+            
+            # 获取当前持仓（用于ADD信号）
+            current_position = None
+            try:
+                if not TRADING_CONFIG.get('test_mode', True):
+                    current_position = self.data_fetcher.get_current_position()
+            except Exception as e:
+                print(f"[警告] 获取持仓失败: {e}")
+            
+            # 注意：余额检查已移至_do_execute_trade中，在实际下单前进行
+            # 这样可以获取最新的余额，避免同周期内多个操作导致的余额不一致
+            
+            # ADD信号转换为实际的BUY/SELL
+            actual_signal = signal
+            if signal == 'ADD':
+                # 根据当前持仓方向决定
+                if current_position:
+                    actual_signal = 'BUY' if current_position.get('side') == 'long' else 'SELL'
+                    print(f"[上涨] 加仓信号: 当前{current_position.get('side')}仓，执行{actual_signal}")
+                else:
+                    print(f"[警告] 无持仓，ADD信号无效")
+                    return
+            
+            # 立即写入数据库
+            trade_id = self.trade_db.create_trade(
+                symbol=symbol_full,
+                signal=actual_signal,
+                entry_price=current_price,
+                quantity=actual_amount,
+                leverage=TRADING_CONFIG['leverage'],
+                ai_decision=decision,
+                market_data=market_data
+            )
+            
+            # 如果是加仓，不更新trade_id（保持原有持仓记录）
+            if signal != 'ADD':
+                self.current_trade_id = trade_id
+            
+            print(f"📝 交易记录已保存到数据库 ID#{trade_id}")
+        
+        # 显示交易信息
+        print(f"{'─'*70}")
+        mode_text = "🧪 测试模式 - 模拟交易" if TRADING_CONFIG.get('test_mode', True) else "🔴 实盘交易"
+        print(mode_text)
+        print(f"{'─'*70}")
+        print(f"币种: {symbol_coin}")
+        print(f"信号: {signal}")
+        print(f"当前价: ${current_price:,.2f}")
+        
+        # 只在开仓时显示数量、止损、止盈
+        if signal in ['BUY', 'SELL', 'ADD']:
+            amount = decision.get('amount')
+            stop_loss = decision.get('stop_loss')
+            take_profit = decision.get('take_profit')
+            
+            if amount is not None:
+                print(f"数量: {amount}")
+            if stop_loss is not None:
+                print(f"止损: ${stop_loss:,.2f}")
+            if take_profit is not None:
+                print(f"止盈: ${take_profit:,.2f}")
+        if self.current_trade_id:
+            print(f"交易ID: #{self.current_trade_id}")
+        print(f"{'─'*70}\n")
+        
+        # 实盘交易执行
+        if not TRADING_CONFIG.get('test_mode', True):
+            self._execute_real_trade(signal, symbol_full, decision, current_price)
+    
+    def _execute_position_reviews(self, reviews: list, all_market_data: Dict, all_positions: list = None):
+        """执行持仓管理建议"""
+        print(f"\n{'='*70}")
+        print("执行持仓管理")
+        print(f"{'='*70}")
+        
+        for review in reviews:
+            symbol = review.get('symbol', '')
+            action = review.get('action', '')
+            
+            # 如果没有action字段，默认为止损止盈管理
+            if not action:
+                action = 'KEEP'  # 默认为KEEP，进行止损止盈检测
+            
+            # 跳过N/A或HOLD的action
+            if action.upper() in ['N/A', 'HOLD']:
+                print(f"\n⏭️  跳过 {symbol}: 无需操作")
+                continue
+            
+            # 清理并提取币种名称
+            if '/' in symbol:
+                coin = symbol.split('/')[0]
+            else:
+                coin = symbol
+            
+            print(f"\n处理 {symbol}:")
+            print(f"建议: {action}")
+            
+            if action == 'CLOSE':
+                # 平仓（立即执行，不需要二次确认）
+                print("📤 执行平仓...")
+                
+                # 特殊处理：ALL表示关闭所有持仓
+                if symbol.upper() == 'ALL':
+                    if not all_positions or len(all_positions) == 0:
+                        print("[信息]  当前无持仓，无需平仓")
+                        continue
+                    
+                    print(f"🔴 关闭所有持仓（共{len(all_positions)}个）")
+                    for pos in all_positions:
+                        try:
+                            pos_symbol = pos.get('symbol')
+                            pos_coin = pos_symbol.split('/')[0] if '/' in pos_symbol else pos_symbol
+                            symbol_full = f"{pos_coin}/USDT:USDT"
+                            
+                            amount = pos.get('size', 0)
+                            side = pos.get('side')
+                            close_side = 'sell' if side == 'long' else 'buy'
+                            
+                            trade_mode = self._get_position_trade_mode(symbol_full)
+                            
+                            print(f"\n  平仓 {pos_symbol}: {amount} @ {close_side}")
+                            order = self.data_fetcher.exchange.create_order(
+                                symbol=symbol_full,
+                                type='market',
+                                side=close_side,
+                                amount=amount,
+                                params={
+                                    'tdMode': trade_mode,
+                                    'posSide': side,
+                                    'reduceOnly': True
+                                }
+                            )
+                            print(f"  [完成] {pos_symbol} 平仓成功")
+                        except Exception as e:
+                            print(f"  [失败] {pos_symbol} 平仓失败: {e}")
+                    continue
+                
+                # 单个币种平仓
+                try:
+                    symbol_full = f"{coin}/USDT:USDT"
+                    inst_id = symbol_full.split(':')[0].replace('/', '-') + '-SWAP'
+                    
+                    # 获取指定币种的持仓信息
+                    position = self.data_fetcher.get_position_by_symbol(symbol_full)
+                    if not position:
+                        print(f"[警告] 未找到{symbol}持仓")
+                        continue
+                    
+                    # 使用size字段（合约数量），而不是btc_amount
+                    amount = position.get('size', 0)
+                    side = position.get('side')  # 'long' or 'short'
+                    
+                    # 平仓方向与开仓相反
+                    close_side = 'sell' if side == 'long' else 'buy'
+                    pos_side = side
+                    
+                    # 智能识别持仓的交易模式
+                    trade_mode = self._get_position_trade_mode(symbol_full)
+                    print(f"📋 检测到持仓模式: {trade_mode}")
+                    
+                    # 执行平仓
+                    order = self.data_fetcher.exchange.create_order(
+                        symbol=symbol_full,
+                        type='market',
+                        side=close_side,
+                        amount=amount,
+                        params={
+                            'tdMode': trade_mode,  # 使用持仓的交易模式
+                            'posSide': pos_side,
+                            'reduceOnly': True  # 只减仓
+                        }
+                    )
+                    
+                    print(f"[完成] {symbol} 平仓成功")
+                    
+                    # 记录到MCP记忆系统
+                    try:
+                        if hasattr(self.ai_trader, 'mcp_memory'):
+                            # 获取持仓信息计算盈亏
+                            pnl_pct = 0
+                            if position:
+                                unrealized_pnl = position.get('unrealized_pnl', 0)
+                                entry_price = position.get('entry_price', 0)
+                                quantity = position.get('quantity', 0)
+                                if entry_price > 0 and quantity > 0:
+                                    pnl_pct = (unrealized_pnl / (entry_price * quantity)) * 100
+                            
+                            trade_info = {
+                                'symbol': coin,
+                                'pnl_percent': pnl_pct,
+                                'market_state': 'unknown',  # 可以从AI决策中提取
+                                'strategy': 'unknown',
+                                'close_reason': review.get('reason', 'AI决策平仓')
+                            }
+                            
+                            if pnl_pct > 0:
+                                self.ai_trader.mcp_memory.record_successful_trade(trade_info)
+                                print(f"🧠 已记录成功交易经验")
+                            else:
+                                self.ai_trader.mcp_memory.record_failed_trade(trade_info)
+                                print(f"🧠 已记录失败交易教训")
+                            
+                            # 保存交易日志
+                            if hasattr(self.ai_trader, 'mcp_filesystem'):
+                                log_content = f"{coin} 平仓 - 盈亏: {pnl_pct:+.2f}% - 原因: {review.get('reason', 'AI决策')}"
+                                self.ai_trader.mcp_filesystem.save_trade_log(log_content)
+                    except Exception as e:
+                        print(f"[警告] MCP记录失败: {e}")
+                    
+                    # 取消止盈止损订单
+                    try:
+                        algo_orders = self.data_fetcher.get_algo_orders(symbol_full)
+                        for order in algo_orders:
+                            order_id = order.get('algoId')
+                            if order_id:
+                                self.data_fetcher.exchange.private_post_trade_cancel_algos([{
+                                    'algoId': order_id,
+                                    'instId': inst_id
+                                }])
+                    except:
+                        pass
+                        
+                except Exception as e:
+                    print(f"[失败] {symbol} 平仓失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            elif action in ['KEEP', 'ADJUST_SL', 'ADJUST_TP']:
+                # KEEP或调整止损止盈（立即执行，不需要二次确认）
+                # 支持多种字段名
+                new_sl = review.get('new_stop_loss') or review.get('suggested_stop_loss') or review.get('stop_loss')
+                new_tp = review.get('new_take_profit') or review.get('suggested_take_profit') or review.get('take_profit')
+                
+                # 获取当前持仓的止损止盈
+                symbol_full = f"{coin}/USDT:USDT"
+                current_position = self.data_fetcher.get_position_by_symbol(symbol_full)
+                current_sl = current_position.get('stop_loss') if current_position else None
+                current_tp = current_position.get('take_profit') if current_position else None
+                
+                # 检查是否需要调整
+                need_adjust_sl = new_sl and (not current_sl or abs(new_sl - current_sl) > 0.01)
+                need_adjust_tp = new_tp and (not current_tp or abs(new_tp - current_tp) > 0.01)
+                
+                if need_adjust_sl:
+                    current_sl_str = f"${current_sl:.2f}" if current_sl else "未设置"
+                    print(f"📋 检测到止损变化: 当前{current_sl_str} → 建议${new_sl:.2f}")
+                if need_adjust_tp:
+                    current_tp_str = f"${current_tp:.2f}" if current_tp else "未设置"
+                    print(f"📋 检测到止盈变化: 当前{current_tp_str} → 建议${new_tp:.2f}")
+                
+                if need_adjust_sl or need_adjust_tp:
+                    print("🔧 自动调整止损止盈...")
+                else:
+                    print("[完成] 保持持仓，止损止盈无需调整")
+                    continue
+                
+                if True:  # 继续执行调整逻辑
+                    try:
+                        symbol_full = f"{coin}/USDT:USDT"
+                        inst_id = symbol_full.split(':')[0].replace('/', '-') + '-SWAP'
+                        
+                        # 1. 只取消需要调整的订单
+                        print("  取消需要调整的订单...")
+                        try:
+                            # 获取当前策略订单
+                            algo_orders = self.data_fetcher.get_algo_orders(symbol_full)
+                            for order in algo_orders:
+                                order_id = order.get('algoId')
+                                if not order_id:
+                                    continue
+                                
+                                # 判断是止损还是止盈订单
+                                has_sl = order.get('slTriggerPx')
+                                has_tp = order.get('tpTriggerPx')
+                                
+                                # 只取消需要调整的订单（使用need_adjust标志）
+                                should_cancel = False
+                                if need_adjust_sl and has_sl:
+                                    should_cancel = True
+                                    print(f"  取消旧止损订单...")
+                                if need_adjust_tp and has_tp:
+                                    should_cancel = True
+                                    print(f"  取消旧止盈订单...")
+                                
+                                if should_cancel:
+                                    cancel_result = self.data_fetcher.exchange.private_post_trade_cancel_algos([{
+                                        'algoId': order_id,
+                                        'instId': inst_id
+                                    }])
+                                    if cancel_result.get('code') == '0':
+                                        print(f"  ✓ 已取消订单 {order_id}")
+                                    else:
+                                        print(f"  [警告] 取消订单失败: {cancel_result.get('msg')}")
+                        except Exception as e:
+                            print(f"  [警告] 取消订单失败: {e}")
+                        
+                        # 2. 获取指定币种的持仓信息
+                        position = self.data_fetcher.get_position_by_symbol(symbol_full)
+                        if not position:
+                            print(f"  [警告] 未找到{symbol}持仓")
+                            continue
+                        
+                        # 使用size字段（合约数量），而不是btc_amount
+                        amount = position.get('size', 0)
+                        side = position.get('side')  # 'long' or 'short'
+                        pos_side = side
+                        close_side = 'sell' if side == 'long' else 'buy'
+                        
+                        # 智能识别持仓的交易模式
+                        trade_mode = self._get_position_trade_mode(symbol_full)
+                        print(f"  📋 检测到持仓模式: {trade_mode}")
+                        
+                        # 修正数量精度
+                        min_amount = TRADING_CONFIG.get('min_amounts', {}).get(coin, 0.01)
+                        if coin in ['ETH', 'SOL']:
+                            amount = round(amount / 0.1) * 0.1  # 0.1的倍数
+                            amount = max(amount, 0.1)  # 确保至少0.1
+                        elif coin == 'BTC':
+                            amount = round(amount / 0.01) * 0.01  # 0.01的倍数
+                            amount = max(amount, 0.01)  # 确保至少0.01
+                        elif coin == 'XRP':
+                            amount = round(amount / 0.1) * 0.1  # 0.1的倍数（1张合约=100 XRP）
+                            amount = max(amount, 0.1)  # 确保至少0.1张
+                        elif coin in ['DOGE', 'BNB']:
+                            amount = int(amount)  # 整数
+                            amount = max(amount, 1)  # 确保至少1
+                        
+                        # 3. 设置新的止损止盈（只设置需要调整的）
+                        success_count = 0
+                        
+                        # 设置止损（只有需要调整时才设置）
+                        if need_adjust_sl and new_sl:
+                            try:
+                                sl_params = {
+                                    'instId': inst_id,
+                                    'tdMode': trade_mode,  # 使用持仓的交易模式
+                                    'posSide': pos_side,
+                                    'side': close_side,
+                                    'ordType': 'conditional',
+                                    'sz': str(amount),
+                                    'slTriggerPx': str(new_sl),
+                                    'slOrdPx': '-1',
+                                }
+                                print(f"  设置新止损: ${new_sl:,.2f}")
+                                result = self.data_fetcher.exchange.private_post_trade_order_algo(sl_params)
+                                
+                                if result.get('code') == '0':
+                                    print(f"  [完成] 止损设置成功")
+                                    success_count += 1
+                                else:
+                                    print(f"  [失败] 止损设置失败: {result.get('msg')}")
+                            except Exception as e:
+                                print(f"  [失败] 止损设置失败: {e}")
+                        
+                        # 设置止盈（只有需要调整时才设置）
+                        if need_adjust_tp and new_tp:
+                            try:
+                                tp_params = {
+                                    'instId': inst_id,
+                                    'tdMode': trade_mode,  # 使用持仓的交易模式
+                                    'posSide': pos_side,
+                                    'side': close_side,
+                                    'ordType': 'conditional',
+                                    'sz': str(amount),
+                                    'tpTriggerPx': str(new_tp),
+                                    'tpOrdPx': '-1',
+                                }
+                                print(f"  设置新止盈: ${new_tp:,.2f}")
+                                result = self.data_fetcher.exchange.private_post_trade_order_algo(tp_params)
+                                
+                                if result.get('code') == '0':
+                                    print(f"  [完成] 止盈设置成功")
+                                    success_count += 1
+                                else:
+                                    print(f"  [失败] 止盈设置失败: {result.get('msg')}")
+                            except Exception as e:
+                                print(f"  [失败] 止盈设置失败: {e}")
+                        
+                        # 总结
+                        total_to_set = (1 if need_adjust_sl else 0) + (1 if need_adjust_tp else 0)
+                        if success_count == total_to_set:
+                            print(f"[完成] {symbol} 止损止盈调整成功")
+                        elif success_count > 0:
+                            print(f"[警告] {symbol} 部分调整成功 ({success_count}/{total_to_set})")
+                        else:
+                            print(f"[失败] {symbol} 调整失败")
+                        
+                    except Exception as e:
+                        print(f"[失败] {symbol} 调整失败: {e}")
+                        import traceback
+                        traceback.print_exc()
+            
+            elif action in ['BUY', 'SELL', 'ADD']:
+                # position_reviews中的开仓/加仓信号（需要二次确认）
+                # 判断是否为加仓（已有持仓）
+                is_add_position = False
+                if action in ['BUY', 'SELL']:
+                    # 检查是否已有该币种的持仓
+                    for pos in (all_positions or []):
+                        if pos.get('symbol') == coin:
+                            is_add_position = True
+                            break
+                
+                action_text = '加仓' if (action == 'ADD' or is_add_position) else '开仓'
+                print(f"[数据] 检测到{action_text}信号: {coin} {action}")
+                
+                # 构造决策对象
+                # 优先使用AI指定的amount，否则使用默认值
+                default_amount = TRADING_CONFIG['amounts'].get(coin, 0.01)
+                ai_amount = review.get('amount')
+                
+                open_decision = {
+                    'signal': action,
+                    'symbol': coin,
+                    'confidence': review.get('confidence', 'MEDIUM'),
+                    'reason': review.get('reason', ''),
+                    'stop_loss': review.get('new_stop_loss'),
+                    'take_profit': review.get('new_take_profit'),
+                    'amount': ai_amount if ai_amount else default_amount,
+                    'think': review.get('reason', '')
+                }
+                
+                if ai_amount:
+                    print(f"   AI指定数量: {ai_amount}")
+                
+                # 获取市场数据
+                coin_data = all_market_data.get(coin, {})
+                current_price = coin_data.get('price', 0)
+                
+                if current_price > 0:
+                    # 调用_execute_trade，会自动应用二次确认机制
+                    self._execute_trade(open_decision, current_price, coin_data)
+                else:
+                    print(f"[警告] 无法获取{coin}价格，跳过开仓")
+        
+        print(f"{'='*70}\n")
+    
+    def _execute_real_trade(self, signal: str, symbol: str, decision: Dict, current_price: float):
+        """执行实盘交易"""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                self._do_execute_trade(signal, symbol, decision, current_price)
+                return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"[警告] 交易失败（尝试 {attempt + 1}/{max_retries}），{retry_delay}秒后重试...")
+                    print(f"   错误: {str(e)[:100]}")
+                    time.sleep(retry_delay)
+                else:
+                    print(f"[失败] 交易最终失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+    
+    def _do_execute_trade(self, signal: str, symbol: str, decision: Dict, current_price: float):
+        """实际执行交易（内部方法）"""
+        try:
+            if signal == 'CLOSE':
+                # 平仓
+                print("📤 执行平仓...")
+                
+                # 获取当前持仓信息
+                position = self.data_fetcher.get_position_by_symbol(symbol)
+                if not position:
+                    print(f"[警告] 未找到{symbol}持仓")
+                    return
+                
+                # 获取持仓信息
+                amount = position.get('size', 0)
+                side = position.get('side')  # 'long' or 'short'
+                
+                if amount <= 0:
+                    print(f"[警告] 持仓数量为0，无需平仓")
+                    return
+                
+                # 平仓方向：多单平仓用sell，空单平仓用buy
+                close_side = 'sell' if side == 'long' else 'buy'
+                
+                # 获取交易模式
+                trade_mode = self._get_position_trade_mode(symbol)
+                
+                print(f"平仓参数: {symbol} | 方向: {close_side} | 数量: {amount} | 模式: {trade_mode} | 持仓方向: {side}")
+                
+                # 执行平仓 - OKX永续合约必须指定posSide
+                params = {
+                    'tdMode': trade_mode,
+                    'posSide': side,  # 持仓方向（long或short）
+                    'reduceOnly': True  # 只减仓，不开新仓
+                }
+                
+                order = self.data_fetcher.exchange.create_order(
+                    symbol=symbol,
+                    type='market',
+                    side=close_side,
+                    amount=amount,
+                    params=params
+                )
+                
+                print(f"[完成] 平仓成功: {order.get('id', 'N/A')}")
+                return
+            
+            # 开仓
+            side = 'buy' if signal == 'BUY' else 'sell'
+            coin = symbol.split('/')[0]
+            
+            # 获取数量，确保不低于最小值
+            ai_amount = decision.get('amount', 0)
+            default_amount = TRADING_CONFIG['amounts'].get(coin, 0.01)
+            min_amount = TRADING_CONFIG.get('min_amounts', {}).get(coin, 0.01)
+            
+            print(f"[数量决策] AI建议: {ai_amount}, 默认: {default_amount}, 最小: {min_amount}")
+            
+            # 使用AI建议的数量，但不能低于最小值
+            if ai_amount and ai_amount > 0:
+                amount = max(ai_amount, min_amount)
+            else:
+                amount = default_amount
+            
+            # [警告] 全仓模式安全系数：适当减少数量，确保有缓冲
+            # 全仓模式保证金共享，利用率更高，但仍需保守
+            # 建议使用AI建议数量的70%，确保有足够缓冲
+            amount = amount * 0.7
+            # 确保不低于最小值
+            amount = max(amount, min_amount)
+            
+            # 根据币种类型格式化数量
+            if coin in ['BTC', 'ETH', 'SOL']:
+                # 小数币种，保留2位小数
+                amount = round(amount, 2)
+            elif coin == 'XRP':
+                # XRP: 1张合约=100 XRP，amount是张数，0.1张=10 XRP
+                # 保留1位小数，0.1的倍数
+                amount = round(amount / 0.1) * 0.1
+                amount = max(amount, 0.1)  # 最小0.1张
+            elif coin in ['DOGE', 'BNB']:
+                # 整数币种，向下取整
+                amount = int(amount)
+            
+            print(f"[警告] 全仓模式安全调整: 使用70%数量 = {amount}")
+            
+            stop_loss = decision.get('stop_loss')
+            take_profit = decision.get('take_profit')
+            
+            # 在下单前获取最新余额和持仓，用于日志输出
+            try:
+                balance = self.data_fetcher.exchange.fetch_balance()
+                available_usdt = balance['USDT']['free']
+                total_usdt = balance['USDT']['total']
+                used_usdt = balance['USDT']['used']
+                required_margin = (current_price * 1.05 * amount) / TRADING_CONFIG['leverage']
+                
+                # 获取当前持仓
+                positions = self.data_fetcher.exchange.fetch_positions()
+                active_positions = [p for p in positions if p.get('contracts', 0) > 0]
+                
+                print(f"[金额] 实时余额检查:")
+                print(f"   总余额: ${total_usdt:.2f}")
+                print(f"   已用: ${used_usdt:.2f}")
+                print(f"   可用: ${available_usdt:.2f}")
+                print(f"   本次需要: ${required_margin:.2f}")
+                print(f"   当前持仓数: {len(active_positions)}")
+                
+                # 如果可用余额不足或持仓过多，给出警告
+                if available_usdt < required_margin * 3:  # 需要3倍缓冲（全仓模式风控更严）
+                    print(f"[警告] 警告: 可用余额可能不足（需要3倍缓冲）！")
+                    print(f"   当前可用: ${available_usdt:.2f}")
+                    print(f"   需要缓冲: ${required_margin * 3:.2f}")
+                    print(f"   建议: 先平掉一些持仓释放保证金，或充值更多资金")
+                    # 不执行开仓
+                    return
+                
+                # 如果持仓过多，也给出警告
+                if len(active_positions) >= 3:
+                    print(f"[警告] 警告: 当前持仓数({len(active_positions)})已达上限！")
+                    print(f"   建议: 先平掉一些持仓再开新仓")
+                    # 不执行开仓
+                    return
+                    
+            except Exception as e:
+                print(f"[警告] 获取余额失败: {e}")
+            
+            print(f"📤 执行开仓: {side.upper()} {amount} {symbol}")
+            if ai_amount and ai_amount > 0 and ai_amount < min_amount:
+                print(f"[警告] AI建议数量{ai_amount}低于最小值{min_amount}，已调整为{amount}")
+            elif ai_amount and ai_amount > 0:
+                print(f"✓ 使用AI建议数量: {ai_amount}")
+            
+            # 1. 设置杠杆
+            leverage = TRADING_CONFIG.get('leverage', 10)
+            try:
+                self.data_fetcher.exchange.set_leverage(
+                    leverage=leverage,
+                    symbol=symbol,
+                    params={'mgnMode': 'cross', 'posSide': 'long' if side == 'buy' else 'short'}
+                )
+                print(f"[完成] 杠杆设置为 {leverage}x")
+            except Exception as e:
+                print(f"[警告] 杠杆设置失败（可能已设置）: {str(e)[:50]}")
+            
+            # 2. 下市价单开仓
+            print("⏳ 发送订单到OKX...")
+            print(f"📋 订单参数: symbol={symbol}, side={side}, amount={amount}")
+            self.data_fetcher.exchange.options['timeout'] = 60000  # 60秒超时
+            
+            # OKX永续合约参数
+            pos_side = 'long' if side == 'buy' else 'short'
+            print(f"📋 OKX参数: tdMode=cross, posSide={pos_side}")
+            
+            order = self.data_fetcher.exchange.create_market_order(
+                symbol=symbol,
+                side=side,
+                amount=amount,
+                params={
+                    'tdMode': 'cross',      # 全仓模式（保证金共享）
+                    'posSide': pos_side,    # 持仓方向
+                    'ccy': 'USDT',          # 保证金币种
+                }
+            )
+            
+            print(f"[完成] 开仓成功: 订单ID {order['id']}")
+            
+            # 2. 先取消该币种的所有旧止盈止损订单（避免累积）
+            inst_id = symbol.split(':')[0].replace('/', '-') + '-SWAP'
+            close_side = 'sell' if side == 'buy' else 'buy'
+            
+            print("🔧 清理旧止盈止损订单...")
+            try:
+                algo_orders = self.data_fetcher.get_algo_orders(symbol)
+                for order in algo_orders:
+                    order_id = order.get('algoId')
+                    if order_id:
+                        cancel_result = self.data_fetcher.exchange.private_post_trade_cancel_algos([{
+                            'algoId': order_id,
+                            'instId': inst_id
+                        }])
+                        if cancel_result.get('code') == '0':
+                            print(f"  ✓ 已取消旧订单 {order_id}")
+            except Exception as e:
+                print(f"  [警告] 清理旧订单失败: {e}")
+            
+            # 3. 设置新的止损止盈
+            
+            # 验证止损止盈价格的合理性
+            if stop_loss or take_profit:
+                print(f"\n📋 验证止损止盈价格...")
+                print(f"   持仓方向: {pos_side}")
+                print(f"   当前价格: ${current_price:,.2f}")
+                if stop_loss:
+                    print(f"   止损价格: ${stop_loss:,.2f}")
+                if take_profit:
+                    print(f"   止盈价格: ${take_profit:,.2f}")
+                
+                # 根据持仓方向验证价格
+                if pos_side == 'long':
+                    # 多单：止损应低于当前价，止盈应高于当前价
+                    if stop_loss and stop_loss >= current_price:
+                        print(f"[警告] 多单止损价格错误！止损${stop_loss:.2f} >= 当前价${current_price:.2f}")
+                        print(f"   自动调整为当前价的98%: ${current_price * 0.98:.2f}")
+                        stop_loss = current_price * 0.98
+                    if take_profit and take_profit <= current_price:
+                        print(f"[警告] 多单止盈价格错误！止盈${take_profit:.2f} <= 当前价${current_price:.2f}")
+                        print(f"   自动调整为当前价的105%: ${current_price * 1.05:.2f}")
+                        take_profit = current_price * 1.05
+                else:  # short
+                    # 空单：止损应高于当前价，止盈应低于当前价
+                    if stop_loss and stop_loss <= current_price:
+                        print(f"[警告] 空单止损价格错误！止损${stop_loss:.2f} <= 当前价${current_price:.2f}")
+                        print(f"   自动调整为当前价的102%: ${current_price * 1.02:.2f}")
+                        stop_loss = current_price * 1.02
+                    if take_profit and take_profit >= current_price:
+                        print(f"[警告] 空单止盈价格错误！止盈${take_profit:.2f} >= 当前价${current_price:.2f}")
+                        print(f"   自动调整为当前价的95%: ${current_price * 0.95:.2f}")
+                        take_profit = current_price * 0.95
+            
+            # 设置止损（使用OKX的止盈止损API）
+            if stop_loss:
+                try:
+                    print(f"\n🛡️ 设置止损: ${stop_loss:,.2f}")
+                    # 使用OKX的条件单API设置止损
+                    sl_order = self.data_fetcher.exchange.create_order(
+                        symbol=symbol,
+                        type='market',
+                        side=close_side,
+                        amount=amount,
+                        params={
+                            'tdMode': 'cross',
+                            'posSide': pos_side,
+                            'ordType': 'conditional',
+                            'slTriggerPx': str(stop_loss),
+                            'slOrdPx': '-1',  # -1表示市价
+                            'reduceOnly': True
+                        }
+                    )
+                    print(f"[完成] 止损设置成功: ${stop_loss:,.2f}, 订单ID: {sl_order.get('id', 'N/A')}")
+                except Exception as e:
+                    print(f"[警告] 止损设置失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+            # 设置止盈
+            if take_profit:
+                try:
+                    print(f"\n[目标] 设置止盈: ${take_profit:,.2f}")
+                    # 使用OKX的条件单API设置止盈
+                    tp_order = self.data_fetcher.exchange.create_order(
+                        symbol=symbol,
+                        type='market',
+                        side=close_side,
+                        amount=amount,
+                        params={
+                            'tdMode': 'cross',
+                            'posSide': pos_side,
+                            'ordType': 'conditional',
+                            'tpTriggerPx': str(take_profit),
+                            'tpOrdPx': '-1',  # -1表示市价
+                            'reduceOnly': True
+                        }
+                    )
+                    print(f"[完成] 止盈设置成功: ${take_profit:,.2f}, 订单ID: {tp_order.get('id', 'N/A')}")
+                except Exception as e:
+                    print(f"[警告] 止盈设置失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
+        except Exception as e:
+            print(f"[失败] 实盘交易执行失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def run(self, interval: int = None):
+        """
+        运行主循环
+        
+        Args:
+            interval: 循环间隔（秒），默认从配置文件读取
+        """
+        if interval is None:
+            interval = TRADING_CONFIG.get('cycle_interval', 300)
+        
+        print(f"\n{'='*70}")
+        print(f"[启动] 开始运行")
+        print(f"   循环间隔: {interval}秒")
+        print(f"   测试模式: {'开启' if TRADING_CONFIG.get('test_mode') else '关闭'}")
+        print(f"{'='*70}\n")
+        
+        try:
+            while True:
+                # 运行一个周期
+                self.run_cycle()
+                
+                # 每10个周期导出一次MCP记忆
+                if self.cycle_count % 10 == 0:
+                    try:
+                        if hasattr(self.ai_trader, 'mcp_filesystem') and hasattr(self.ai_trader, 'mcp_memory'):
+                            self.ai_trader.mcp_filesystem.export_mcp_memory(self.ai_trader.mcp_memory)
+                    except Exception as e:
+                        print(f"[警告] 导出MCP记忆失败: {e}")
+                
+                # 每24小时同步一次MCP到数据库
+                if self.cycle_count % 288 == 0:  # 假设5分钟一个周期，288个周期=24小时
+                    try:
+                        synced = self.mcp_sync.auto_sync_if_needed(interval_hours=24)
+                        if synced > 0:
+                            print(f"[同步] 已同步{synced}笔交易到数据库")
+                    except Exception as e:
+                        print(f"[警告] 同步到数据库失败: {e}")
+                
+                # 可中断的等待
+                print(f"⏳ 等待{interval}秒后开始下一个周期...")
+                print(f"   (按 Ctrl+C 停止)\n")
+                
+                # 分段sleep，每秒检查一次，便于快速响应Ctrl+C
+                for i in range(interval):
+                    time.sleep(1)
+        
+        except KeyboardInterrupt:
+            print(f"\n\n{'='*70}")
+            print("🛑 收到停止信号")
+            print(f"{'='*70}\n")
+            self.stop()
+    
+    def stop(self):
+        """停止机器人"""
+        # AI统计
+        ai_stats = self.ai_trader.get_conversation_stats()
+        
+        # 交易统计
+        trade_stats = self.trade_db.get_trade_statistics()
+        
+        print(f"[数据] 运行统计:")
+        print(f"   总周期数: {self.cycle_count}")
+        print(f"   对话轮数: {ai_stats['total_rounds']}")
+        print(f"   总消息数: {ai_stats['total_messages']}")
+        
+        print(f"\n[上涨] 交易统计:")
+        print(f"   总交易数: {trade_stats['total_trades']}")
+        print(f"   未平仓: {trade_stats['open_trades']}")
+        print(f"   已平仓: {trade_stats['closed_trades']}")
+        if trade_stats['closed_trades'] > 0:
+            print(f"   胜率: {trade_stats['win_rate']:.1f}%")
+            print(f"   总盈亏: ${trade_stats['total_pnl']:.2f}")
+        
+        print(f"\n{'='*70}")
+        print("👋 交易机器人已停止")
+        print(f"{'='*70}\n")
+
+
+def main():
+    """主函数"""
+    bot = SimpleAITradingBot()
+    
+    # 运行（从配置文件读取间隔）
+    bot.run()
+
+
+if __name__ == "__main__":
+    main()

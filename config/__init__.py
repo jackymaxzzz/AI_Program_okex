@@ -1,0 +1,36 @@
+"""
+配置模块 - 统一管理所有配置
+"""
+from .settings import (
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
+    OKX_API_KEY,
+    OKX_SECRET,
+    OKX_PASSWORD,
+    OKX_TESTNET_API_KEY,
+    OKX_TESTNET_SECRET,
+    OKX_TESTNET_PASSWORD,
+    TRADING_CONFIG,
+    TIMEFRAME_CONFIG,
+    DATA_POINTS,
+    CONVERSATION_CONFIG,
+    validate_config
+)
+
+__all__ = [
+    'DEEPSEEK_API_KEY',
+    'DEEPSEEK_BASE_URL',
+    'DEEPSEEK_MODEL',
+    'OKX_API_KEY',
+    'OKX_SECRET',
+    'OKX_PASSWORD',
+    'OKX_TESTNET_API_KEY',
+    'OKX_TESTNET_SECRET',
+    'OKX_TESTNET_PASSWORD',
+    'TRADING_CONFIG',
+    'TIMEFRAME_CONFIG',
+    'DATA_POINTS',
+    'CONVERSATION_CONFIG',
+    'validate_config'
+]
