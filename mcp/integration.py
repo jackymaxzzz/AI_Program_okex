@@ -72,7 +72,7 @@ class MCPTradingMemory:
                 'market_state': market_state,
                 'strategy': strategy,
                 'timestamp': datetime.now().isoformat(),
-                'observation': (
+                'observation': trade_info.get('observation') or (
                     f"[完成] {symbol}成功交易: 盈利{pnl_pct:.2f}%, "
                     f"市场状态={market_state}, 策略={strategy}"
                 )
@@ -125,7 +125,7 @@ class MCPTradingMemory:
                 'strategy': strategy,
                 'reason': reason,
                 'timestamp': datetime.now().isoformat(),
-                'observation': (
+                'observation': trade_info.get('observation') or (
                     f"❌ {symbol}失败交易: 亏损{abs(pnl_pct):.2f}%, "
                     f"市场状态={market_state}, 策略={strategy}, 原因={reason}"
                 )
