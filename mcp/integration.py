@@ -49,8 +49,9 @@ class MCPTradingMemory:
         
         self.enabled = True
         
-        # 从数据库恢复历史交易
-        self._restore_from_database()
+        # 注意：不在这里调用_restore_from_database()
+        # 因为此时数据库可能还没有初始化
+        # 应该在main.py中手动调用
     
     def _restore_from_database(self):
         """从数据库恢复历史交易到MCP"""

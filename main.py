@@ -62,12 +62,19 @@ class SimpleAITradingBot:
         self.position_manager = PositionManager(self.data_fetcher, self.trade_db)
         self.order_sync = OrderSync(self.data_fetcher, self.trade_db)
         
-        # 加载历史MCP记忆
+        # 从数据库加载历史交易到MCP（必须在OrderSync之前，因为数据库可能已有历史数据）
+        try:
+            print("[MCP] 正在从数据库加载历史交易...")
+            self.ai_trader.mcp_memory._restore_from_database()
+        except Exception as e:
+            print(f"[警告] 从数据库加载MCP失败: {e}")
+        
+        # 加载历史MCP记忆文件
         try:
             self.ai_trader.mcp_filesystem.import_mcp_memory(self.ai_trader.mcp_memory)
-            print("[加载] MCP历史记忆已加载")
+            print("[加载] MCP历史记忆文件已加载")
         except Exception as e:
-            print(f"[警告] 加载MCP记忆失败: {e}")
+            print(f"[警告] 加载MCP记忆文件失败: {e}")
         
         # 状态
         self.current_trade_id = None
@@ -200,7 +207,12 @@ class SimpleAITradingBot:
             current_position = all_positions[0] if all_positions else None  # 保持向后兼容
             
             # 5.1 从API同步历史成交到数据库
-            self.order_sync.sync_filled_orders_from_api()
+            synced_count = self.order_sync.sync_filled_orders_from_api()
+            
+            # 5.1.1 如果有新同步的交易，重新加载MCP
+            if synced_count > 0:
+                print(f"[MCP] 检测到{synced_count}笔新交易，重新加载MCP数据...")
+                self.ai_trader.mcp_memory._restore_from_database()
             
             # 5.2 同步数据库：关闭所有不在持仓中的交易
             self.position_manager.sync_database_with_positions(current_position)
