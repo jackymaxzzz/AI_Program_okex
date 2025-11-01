@@ -346,7 +346,7 @@ XRP: 1张=100个，amount=0.1代表10个XRP
         # Token优化：判断是否需要发送交易历史
         should_send_trade_history = False
         try:
-            from trade_database import TradeDatabase
+            from data import TradeDatabase
             db = TradeDatabase()
             
             # 获取当前持仓的symbol列表（用于过滤）
@@ -455,7 +455,7 @@ XRP: 1张=100个，amount=0.1代表10个XRP
             
             for position in all_positions:
                 # 获取持仓详细信息
-                from trade_database import TradeDatabase
+                from data import TradeDatabase
                 db = TradeDatabase()
                 
                 # 查找交易记录
@@ -517,7 +517,7 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                 if holding_duration == "N/A":
                     trade = None
                     try:
-                        from trade_database import TradeDatabase
+                        from data import TradeDatabase
                         db = TradeDatabase()
                         if self.current_trade_id:
                             trade = db.get_trade_by_id(self.current_trade_id)
