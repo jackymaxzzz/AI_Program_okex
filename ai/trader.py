@@ -336,10 +336,37 @@ XRP: 1张=100个，amount=0.1代表10个XRP
             else:
                 detailed_guide = ""
             
+            # 获取MCP统计信息
+            mcp_stats = ""
+            if hasattr(self, 'mcp_memory') and self.mcp_memory.enabled:
+                success_count = len(self.mcp_memory.successful_trades)
+                failed_count = len(self.mcp_memory.failed_trades)
+                total_count = success_count + failed_count
+                
+                if total_count > 0:
+                    win_rate = (success_count / total_count) * 100
+                    
+                    # 统计做多做空
+                    long_success = sum(1 for t in self.mcp_memory.successful_trades if t.get('side') == 'long')
+                    long_failed = sum(1 for t in self.mcp_memory.failed_trades if t.get('side') == 'long')
+                    short_success = sum(1 for t in self.mcp_memory.successful_trades if t.get('side') == 'short')
+                    short_failed = sum(1 for t in self.mcp_memory.failed_trades if t.get('side') == 'short')
+                    
+                    long_total = long_success + long_failed
+                    short_total = short_success + short_failed
+                    
+                    mcp_stats = f" | 交易: {total_count}笔(胜率{win_rate:.0f}%)"
+                    if long_total > 0:
+                        long_win_rate = (long_success / long_total) * 100
+                        mcp_stats += f" 多{long_total}笔({long_win_rate:.0f}%)"
+                    if short_total > 0:
+                        short_win_rate = (short_success / short_total) * 100
+                        mcp_stats += f" 空{short_total}笔({short_win_rate:.0f}%)"
+            
             account_overview = f"""
 === 账户总览 ===
 初始: ${initial_balance:,.2f} | 可用: ${avail_balance:,.2f} | 账户金额: ${total_value:,.2f}
-盈亏: ${pnl:+,.2f} ({pnl_pct:+.2f}%)
+盈亏: ${pnl:+,.2f} ({pnl_pct:+.2f}%){mcp_stats}
 {risk_warning}{detailed_guide}
 """
         
