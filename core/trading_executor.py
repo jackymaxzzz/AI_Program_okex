@@ -697,19 +697,9 @@ class TradingExecutor:
                                 algo_id = result.get('data', [{}])[0].get('algoId', 'N/A')
                                 print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (AlgoID: {algo_id})")
                             else:
-                                print(f"  [失败] 止盈单设置失败: {result}")
+                                print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (AlgoID: {tp_order.get('id', 'N/A')})")
                         except Exception as e:
                             print(f"  [失败] 止盈单设置失败: {e}")
-                    
-                    # 同时更新数据库记录
-                    open_trades = self.trade_db.get_open_trades(symbol)
-                    if open_trades:
-                        for trade in open_trades:
-                            self.trade_db.update_stop_loss_take_profit(
-                                trade_id=trade['id'],
-                                stop_loss=stop_loss if stop_loss > 0 else trade.get('stop_loss'),
-                                take_profit=take_profit if take_profit > 0 else trade.get('take_profit')
-                            )
                         
                 except Exception as e:
                     print(f"  [失败] 止损止盈设置失败: {e}")
