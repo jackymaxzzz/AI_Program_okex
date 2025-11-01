@@ -401,8 +401,14 @@ class DataFetcher:
                     contract_size = float(pos.get('contractSize', 0.01))
                     btc_amount = contracts * contract_size
                     
-                    # 调试：打印原始时间字段
-                    print(f"[调试] {pos['symbol']} 原始数据: cTime={pos.get('cTime')}, uTime={pos.get('uTime')}, cTime类型={type(pos.get('cTime'))}")
+                    # 调试：打印原始ccxt数据
+                    print(f"[调试] ccxt格式 {pos['symbol']}: cTime={pos.get('cTime')}, uTime={pos.get('uTime')}")
+                    
+                    # 尝试从OKX原始数据获取时间（ccxt会保存在info字段）
+                    okx_info = pos.get('info', {})
+                    okx_ctime = okx_info.get('cTime')
+                    okx_utime = okx_info.get('uTime')
+                    print(f"[调试] OKX原始 {pos['symbol']}: cTime={okx_ctime}, uTime={okx_utime}")
                     
                     pos_info = {
                         'side': pos['side'],  # 'long' or 'short'
@@ -413,8 +419,8 @@ class DataFetcher:
                         'leverage': float(pos['leverage']) if pos['leverage'] else TRADING_CONFIG['leverage'],
                         'liquidation_price': float(pos.get('liquidationPrice', 0)) if pos.get('liquidationPrice') else 0,
                         'symbol': pos['symbol'],
-                        'uTime': pos.get('uTime'),  # 持仓更新时间（毫秒）
-                        'cTime': pos.get('cTime'),  # 持仓创建时间（毫秒）
+                        'uTime': okx_utime or pos.get('uTime'),  # 优先使用OKX原始数据
+                        'cTime': okx_ctime or pos.get('cTime'),  # 优先使用OKX原始数据
                     }
                     
                     # 获取止盈止损订单
