@@ -804,15 +804,23 @@ class MCPFileSystem:
             with open(filepath, 'r', encoding='utf-8') as f:
                 import_data = json.load(f)
             
-            # 导入数据（包含长期记忆）
-            memory.successful_trades = import_data.get('successful_trades', [])
-            memory.failed_trades = import_data.get('failed_trades', [])
-            memory.long_term_lessons = import_data.get('long_term_lessons', [])
-            memory.critical_mistakes = import_data.get('critical_mistakes', [])
-            memory.best_practices = import_data.get('best_practices', [])
-            memory.market_patterns = import_data.get('market_patterns', {})
-            memory.strategy_stats = import_data.get('strategy_stats', {})
-            memory.symbol_performance = import_data.get('symbol_performance', {})
+            # 只有文件有数据时才导入（避免覆盖从数据库加载的数据）
+            file_successful = import_data.get('successful_trades', [])
+            file_failed = import_data.get('failed_trades', [])
+            
+            if file_successful or file_failed:
+                # 文件有数据，导入
+                memory.successful_trades = file_successful
+                memory.failed_trades = file_failed
+                memory.long_term_lessons = import_data.get('long_term_lessons', [])
+                memory.critical_mistakes = import_data.get('critical_mistakes', [])
+                memory.best_practices = import_data.get('best_practices', [])
+                memory.market_patterns = import_data.get('market_patterns', {})
+                memory.strategy_stats = import_data.get('strategy_stats', {})
+                memory.symbol_performance = import_data.get('symbol_performance', {})
+            else:
+                # 文件为空，不覆盖已有数据（可能从数据库加载的）
+                print("📂 MCP文件为空，保留已加载的数据")
             
             total_trades = len(memory.successful_trades) + len(memory.failed_trades)
             total_long_term = len(memory.long_term_lessons) + len(memory.critical_mistakes) + len(memory.best_practices)

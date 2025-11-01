@@ -786,6 +786,26 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                     stats_text += f"做空: {short_total}笔 (成功{short_success}笔, 失败{short_failed}笔, 胜率{short_win_rate:.1f}%)\n"
                 stats_text += f"累计盈亏: ${total_pnl:.2f}\n"
                 
+                # 添加每个币种的统计
+                symbol_stats = {}
+                for trade in self.mcp_memory.successful_trades + self.mcp_memory.failed_trades:
+                    symbol = trade.get('symbol', 'UNKNOWN')
+                    if symbol not in symbol_stats:
+                        symbol_stats[symbol] = {'success': 0, 'failed': 0, 'total_pnl': 0}
+                    
+                    if trade.get('pnl_percent', 0) > 0:
+                        symbol_stats[symbol]['success'] += 1
+                    else:
+                        symbol_stats[symbol]['failed'] += 1
+                    symbol_stats[symbol]['total_pnl'] += trade.get('realized_pnl', 0)
+                
+                if symbol_stats:
+                    stats_text += f"\n各币种表现:\n"
+                    for symbol, stats in sorted(symbol_stats.items(), key=lambda x: x[1]['success'] + x[1]['failed'], reverse=True):
+                        total = stats['success'] + stats['failed']
+                        win_rate = (stats['success'] / total * 100) if total > 0 else 0
+                        stats_text += f"  {symbol}: {total}笔 (胜率{win_rate:.0f}%, 盈亏${stats['total_pnl']:.2f})\n"
+                
                 mcp_insights = stats_text
             
             # 获取短期交易洞察
