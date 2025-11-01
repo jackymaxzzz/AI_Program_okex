@@ -589,6 +589,27 @@ class TradingExecutor:
             
             print(f"[数据] 设置止损止盈: {symbol} | 止损: ${stop_loss:.2f} | 止盈: ${take_profit:.2f}")
             
+            # 先取消该币种的所有现有algo订单
+            inst_id = symbol.replace('/', '-').replace(':USDT', '-SWAP')
+            try:
+                pending_algos = self.data_fetcher.exchange.private_get_trade_orders_algo_pending({
+                    'instId': inst_id,
+                    'ordType': 'conditional'
+                })
+                
+                if pending_algos.get('code') == '0' and pending_algos.get('data'):
+                    for algo in pending_algos['data']:
+                        algo_id = algo.get('algoId')
+                        if algo_id:
+                            cancel_result = self.data_fetcher.exchange.private_post_trade_cancel_algos([{
+                                'instId': inst_id,
+                                'algoId': algo_id
+                            }])
+                            if cancel_result.get('code') == '0':
+                                print(f"  [取消] 已取消旧的algo订单: {algo_id}")
+            except Exception as e:
+                print(f"  [警告] 取消旧订单失败: {e}")
+            
             # OKX使用algo order设置止损止盈
             # 参考: https://www.okx.com/docs-v5/zh/#order-book-trading-algo-trading-post-place-algo-order
             
