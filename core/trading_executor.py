@@ -140,7 +140,7 @@ class TradingExecutor:
             print(f"   价格: ${current_price:.2f}")
             print(f"   止损: ${stop_loss:.2f}")
             print(f"   止盈: ${take_profit:.2f}")
-            print(f"   信心度: {confidence}%")
+            print(f"   信心度: {confidence}")
             print(f"   等待下一周期确认...\n")
             
             self.pending_open_decisions[symbol_coin] = {
