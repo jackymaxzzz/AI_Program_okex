@@ -355,9 +355,13 @@ class TradingExecutor:
             if sl_changed or tp_changed:
                 print(f"\n{symbol_coin}:")
                 if sl_changed:
-                    print(f"  止损: ${current_sl:,.2f} → ${suggested_sl:,.2f}")
+                    current_sl_str = f"${current_sl:,.2f}" if current_sl else "未设置"
+                    suggested_sl_str = f"${suggested_sl:,.2f}" if suggested_sl else "未设置"
+                    print(f"  止损: {current_sl_str} → {suggested_sl_str}")
                 if tp_changed:
-                    print(f"  止盈: ${current_tp:,.2f} → ${suggested_tp:,.2f}")
+                    current_tp_str = f"${current_tp:,.2f}" if current_tp else "未设置"
+                    suggested_tp_str = f"${suggested_tp:,.2f}" if suggested_tp else "未设置"
+                    print(f"  止盈: {current_tp_str} → {suggested_tp_str}")
                 if reason:
                     print(f"  理由: {reason}")
                 

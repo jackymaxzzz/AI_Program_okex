@@ -482,7 +482,7 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                 
                 # 从API获取开仓时间
                 try:
-                    from utils.data_fetcher import DataFetcher
+                    from data import DataFetcher
                     from datetime import datetime, timedelta
                     
                     data_fetcher = DataFetcher()
