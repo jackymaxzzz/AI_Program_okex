@@ -490,10 +490,14 @@ class TradingExecutor:
     def _execute_real_close(self, symbol: str, decision: Dict, current_price: float, trade_id: Optional[int]):
         """执行实盘平仓"""
         try:
+            # 刷新持仓数据（确保是最新的）
+            print(f"[检查] 刷新{symbol}持仓数据...")
+            self.data_fetcher.fetch_positions()
+            
             # 获取当前持仓
             position = self.data_fetcher.get_position_by_symbol(symbol)
             if not position:
-                print(f"[警告] 未找到{symbol}持仓")
+                print(f"[警告] 未找到{symbol}持仓，可能已被止损/止盈触发")
                 return
             
             # 获取持仓信息
@@ -501,8 +505,10 @@ class TradingExecutor:
             side = position.get('side')  # 'long' or 'short'
             
             if amount <= 0:
-                print(f"[警告] 持仓数量为0，无需平仓")
+                print(f"[警告] 持仓数量为0，可能已被止损/止盈触发")
                 return
+            
+            print(f"[确认] 持仓存在: {side} {amount}")
             
             # 平仓方向：多单平仓用sell，空单平仓用buy
             close_side = 'sell' if side == 'long' else 'buy'
