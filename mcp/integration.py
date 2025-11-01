@@ -48,6 +48,72 @@ class MCPTradingMemory:
         self.symbol_performance = {}  # 各币种表现
         
         self.enabled = True
+        
+        # 从数据库恢复历史交易
+        self._restore_from_database()
+    
+    def _restore_from_database(self):
+        """从数据库恢复历史交易到MCP"""
+        try:
+            from data import TradeDatabase
+            db = TradeDatabase()
+            
+            # 获取所有已完成的交易
+            import sqlite3
+            conn = sqlite3.connect(db.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT symbol, side, entry_price, exit_price, quantity, 
+                       realized_pnl, pnl_percent, open_time, close_time
+                FROM trades 
+                WHERE status = 'CLOSED'
+                ORDER BY close_time DESC
+                LIMIT 100
+            ''')
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            restored_count = 0
+            for row in rows:
+                symbol, side, entry_price, exit_price, quantity, realized_pnl, pnl_percent, open_time, close_time = row
+                
+                # 构建交易信息
+                trade_info = {
+                    'symbol': symbol.split('/')[0] if '/' in symbol else symbol,
+                    'side': side,
+                    'entry_price': entry_price or 0,
+                    'exit_price': exit_price or 0,
+                    'amount': quantity or 0,
+                    'pnl_percent': pnl_percent or 0,
+                    'realized_pnl': realized_pnl or 0,
+                    'stop_loss': 0,
+                    'take_profit': 0,
+                    'confidence': 'UNKNOWN',
+                    'reason': '历史交易',
+                    'market_state': 'unknown',
+                    'technical_indicators': {},
+                    'entry_cycle': 0,
+                    'exit_cycle': 0,
+                    'close_reason': '历史交易',
+                    'strategy': 'unknown'
+                }
+                
+                # 根据盈亏分类
+                if pnl_percent and pnl_percent > 0:
+                    self.successful_trades.append(trade_info)
+                else:
+                    self.failed_trades.append(trade_info)
+                
+                restored_count += 1
+            
+            if restored_count > 0:
+                print(f"[MCP] 从数据库恢复了{restored_count}笔历史交易")
+                print(f"  成功: {len(self.successful_trades)}笔")
+                print(f"  失败: {len(self.failed_trades)}笔")
+                
+        except Exception as e:
+            print(f"[警告] 从数据库恢复MCP数据失败: {e}")
     
     def record_successful_trade(self, trade_info: Dict):
         """
@@ -1298,15 +1364,17 @@ class MCPIntelligence:
             if not relevant_trades:
                 return None
             
-            # 统计各策略表现
-            strategy_stats = {}
+            # 策略统计
+            self.strategy_stats = {}
             for trade in relevant_trades:
                 strategy = trade.get('strategy', 'unknown')
-                if strategy not in strategy_stats:
-                    strategy_stats[strategy] = {
+                if strategy not in self.strategy_stats:
+                    self.strategy_stats[strategy] = {
                         'count': 0,
                         'total_pnl': 0
                     }
+                self.strategy_stats[strategy]['count'] += 1
+                self.strategy_stats[strategy]['total_pnl'] += trade['pnl_percent']
                 strategy_stats[strategy]['count'] += 1
                 strategy_stats[strategy]['total_pnl'] += trade['pnl_percent']
             
