@@ -26,6 +26,49 @@ class TradingExecutor:
         self.pending_open_decisions = {}  # 待确认的开仓决策
         self.current_cycle = 0  # 当前周期号
         self.trade_decisions = {}  # 记录每笔交易的决策信息 {trade_id: decision_info}
+        
+        # 从数据库恢复未平仓交易的决策信息
+        self._restore_trade_decisions()
+    
+    def _restore_trade_decisions(self):
+        """从数据库恢复未平仓交易的决策信息"""
+        try:
+            import json
+            open_trades = self.trade_db.get_open_trades()
+            restored_count = 0
+            
+            for trade in open_trades:
+                trade_id = trade.get('id')
+                
+                if trade_id:
+                    # 从数据库字段读取AI决策信息
+                    self.trade_decisions[trade_id] = {
+                        'symbol': trade.get('symbol', '').split('/')[0],
+                        'signal': 'BUY' if trade.get('side') == 'long' else 'SELL',
+                        'entry_price': trade.get('entry_price', 0),
+                        'amount': trade.get('quantity', 0),
+                        'stop_loss': trade.get('stop_loss_price', 0),
+                        'take_profit': trade.get('take_profit_price', 0),
+                        'confidence': trade.get('ai_confidence', 'UNKNOWN'),
+                        'reason': trade.get('ai_reason', ''),
+                        'think': trade.get('ai_think', ''),
+                        'market_state': 'unknown',  # 数据库没有存储
+                        'strategy': 'unknown',  # 数据库没有存储
+                        'technical_indicators': {},  # 数据库没有存储
+                        'cycle': 0,  # 未知周期
+                        'entry_time': trade.get('open_time', ''),
+                        'timestamp': None,
+                        'market_trend': 'unknown',
+                        'volume_ratio': 0,
+                        'order_id': '',
+                        'leverage': trade.get('leverage', 10)
+                    }
+                    restored_count += 1
+            
+            if restored_count > 0:
+                print(f"[MCP] 从数据库恢复了{restored_count}笔未平仓交易的决策信息")
+        except Exception as e:
+            print(f"[警告] 恢复交易决策信息失败: {e}")
     
     def execute_trade(self, decision: Dict, current_price: float, market_data: Dict, 
                      current_trade_id: Optional[int] = None, all_market_data: Dict = None) -> Optional[int]:
