@@ -486,10 +486,11 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                     
                     symbol = position.get('symbol')
                     
-                    # 使用position自带的时间戳（如果有）
-                    pos_timestamp = position.get('timestamp')
+                    # 使用position自带的时间戳（OKX返回cTime创建时间）
+                    pos_timestamp = position.get('cTime') or position.get('timestamp')
                     if pos_timestamp:
-                        open_time = datetime.fromtimestamp(pos_timestamp / 1000)
+                        # OKX的时间戳是毫秒
+                        open_time = datetime.fromtimestamp(int(pos_timestamp) / 1000)
                         open_time_for_db = open_time.isoformat()
                         duration_seconds = (datetime.now() - open_time).total_seconds()
                         
@@ -500,7 +501,10 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                         else:
                             holding_duration = f"{duration_seconds/86400:.1f}天"
                 except Exception as e:
-                    pass
+                    # 如果获取失败，打印错误以便调试
+                    import traceback
+                    print(f"[调试] 计算持仓时长失败: {e}")
+                    traceback.print_exc()
                 
                 # 备用方案：使用数据库
                 if holding_duration == "N/A":
