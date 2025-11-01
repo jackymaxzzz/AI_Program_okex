@@ -62,6 +62,8 @@ class SimpleAITradingBot:
         self.position_manager = PositionManager(self.data_fetcher, self.trade_db)
         self.order_sync = OrderSync(self.data_fetcher, self.trade_db)
         
+        print("[初始化] 准备加载MCP历史数据...")
+        
         # 从数据库加载历史交易到MCP（必须在OrderSync之前，因为数据库可能已有历史数据）
         try:
             print("[MCP] 正在从数据库加载历史交易...")
