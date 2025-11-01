@@ -64,7 +64,10 @@ class OrderSync:
                             
                             db_side = db_trade.get('side')  # 'long' or 'short'
                             entry_price = db_trade.get('entry_price', 0)
-                            entry_time = datetime.fromisoformat(db_trade.get('entry_time', ''))
+                            entry_time_str = db_trade.get('entry_time', '')
+                            if not entry_time_str:
+                                continue  # 跳过没有entry_time的记录
+                            entry_time = datetime.fromisoformat(entry_time_str)
                             
                             # 判断是否为平仓订单
                             is_close_order = (
@@ -189,8 +192,11 @@ class OrderSync:
         
         # 检查时间（订单时间应该在交易开仓时间之后）
         order_time = datetime.fromtimestamp(order.get('timestamp', 0) / 1000)
-        entry_time = datetime.fromisoformat(trade.get('entry_time', ''))
+        entry_time_str = trade.get('entry_time', '')
+        if not entry_time_str:
+            return False  # 没有entry_time，无法判断
         
+        entry_time = datetime.fromisoformat(entry_time_str)
         if order_time <= entry_time:
             return False
         
