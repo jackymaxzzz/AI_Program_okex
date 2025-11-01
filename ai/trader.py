@@ -918,7 +918,7 @@ JSON格式：
                     
                     # RSI可能为NaN
                     daily_rsi = daily_tech.get('rsi', 0)
-                    rsi_str = f"{daily_rsi:.1f}" if daily_rsi and not (isinstance(daily_rsi, float) and daily_rsi != daily_rsi) else "N/A(需14根)"
+                    rsi_str = f"{daily_rsi:.1f}" if daily_rsi and not (isinstance(daily_rsi, float) and daily_rsi != daily_rsi) else "N/A"
                     section += f"\n日线趋势: {daily_trend} | MA20={ma_fmt(daily_tech.get('sma_20', 0))} MA50={ma_fmt(daily_tech.get('sma_50', 0))} RSI={rsi_str}"
             
             return section
