@@ -41,14 +41,6 @@ class OrderSync:
                         since=int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
                     )
                     
-                    # 调试：打印第一条订单的完整数据
-                    if orders and len(orders) > 0:
-                        print(f"\n[调试] {symbol} 历史订单示例：")
-                        print(f"订单数量: {len(orders)}")
-                        print(f"第一条订单数据: {orders[0]}")
-                        print(f"字段列表: {list(orders[0].keys())}")
-                        print()
-                    
                     if not orders:
                         continue
                     

@@ -486,9 +486,6 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                     
                     symbol = position.get('symbol')
                     
-                    # 调试：打印position的所有字段
-                    print(f"[调试] {symbol} position字段: cTime={position.get('cTime')}, uTime={position.get('uTime')}, timestamp={position.get('timestamp')}")
-                    
                     # 使用position自带的时间戳（OKX返回cTime创建时间）
                     pos_timestamp = position.get('cTime') or position.get('uTime') or position.get('timestamp')
                     
@@ -498,22 +495,16 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                         open_time_for_db = open_time.isoformat()
                         duration_seconds = (datetime.now() - open_time).total_seconds()
                         
-                        print(f"[调试] {symbol} 开仓时间: {open_time}, 持仓时长: {duration_seconds}秒")
-                        
                         if duration_seconds < 3600:
                             holding_duration = f"{duration_seconds/60:.0f}分钟"
                         elif duration_seconds < 86400:
                             holding_duration = f"{duration_seconds/3600:.1f}小时"
                         else:
                             holding_duration = f"{duration_seconds/86400:.1f}天"
-                    else:
-                        print(f"[调试] {symbol} 没有找到时间戳字段")
                         
                 except Exception as e:
-                    # 如果获取失败，打印错误以便调试
-                    import traceback
-                    print(f"[调试] 计算持仓时长失败: {e}")
-                    traceback.print_exc()
+                    # 如果获取失败，静默处理
+                    pass
                 
                 # 备用方案：使用数据库
                 if holding_duration == "N/A":
