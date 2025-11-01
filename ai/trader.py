@@ -336,7 +336,7 @@ class PureAITrader:
 XRP合约规则：
 - amount=1 代表100个XRP（1张合约）
 - amount=10 代表1000个XRP（10张合约）
-- 最小数量：10（即1000个XRP）
+- 最小数量：1（即100个XRP）
 """
             else:
                 detailed_guide = ""
