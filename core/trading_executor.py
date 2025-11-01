@@ -428,10 +428,10 @@ class TradingExecutor:
                 symbol=symbol,
                 signal=signal,
                 entry_price=current_price,
-                amount=amount,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                ai_decision=decision
+                quantity=amount,
+                leverage=TRADING_CONFIG.get('leverage', 10),
+                ai_decision=decision,
+                market_data={}
             )
             
             print(f"[数据] 交易记录已保存: ID#{trade_id}")
