@@ -227,10 +227,7 @@ class SimpleAITradingBot:
                 all_positions=all_positions
             )
             
-            # 7. 显示决策
-            self._display_decision(decision)
-            
-            # 8. 检测连续HOLD并应用指数退避
+            # 7. 检测连续HOLD并应用指数退避
             signal = decision.get('signal', 'HOLD')
             has_position = current_position is not None
             
