@@ -68,6 +68,8 @@ class SimpleAITradingBot:
             self.ai_trader.mcp_memory._restore_from_database()
         except Exception as e:
             print(f"[警告] 从数据库加载MCP失败: {e}")
+            import traceback
+            traceback.print_exc()
         
         # 加载历史MCP记忆文件
         try:
