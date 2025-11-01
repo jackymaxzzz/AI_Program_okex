@@ -43,6 +43,13 @@ class TradingExecutor:
         if signal == 'HOLD' or symbol_coin == 'NONE':
             return current_trade_id
         
+        # 清理symbol格式，只保留币种名称
+        # 处理可能的格式：BTC, BTC/USDT, BTC/USDT:USDT
+        if ':' in symbol_coin:
+            symbol_coin = symbol_coin.split(':')[0]  # 移除:USDT
+        if '/' in symbol_coin:
+            symbol_coin = symbol_coin.split('/')[0]  # 只保留币种名
+        
         # 构建完整交易对符号
         symbol_full = f"{symbol_coin}/USDT:USDT"
         
@@ -231,9 +238,14 @@ class TradingExecutor:
             suggested_tp = review.get('suggested_take_profit')
             reason = review.get('reason', '')
             
-            if not symbol_coin:
-                continue
+            # 清理symbol格式，只保留币种名称
+            # 处理可能的格式：BTC, BTC/USDT, BTC/USDT:USDT
+            if ':' in symbol_coin:
+                symbol_coin = symbol_coin.split(':')[0]  # 移除:USDT
+            if '/' in symbol_coin:
+                symbol_coin = symbol_coin.split('/')[0]  # 只保留币种名
             
+            # 构建完整交易对符号
             symbol_full = f"{symbol_coin}/USDT:USDT"
             
             # 获取当前持仓
