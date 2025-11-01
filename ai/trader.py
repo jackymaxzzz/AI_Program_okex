@@ -668,6 +668,14 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                 pending_reminder += f"\n{symbol} {signal}（周期#{cycle}首次建议）：\n"
                 pending_reminder += f"  信心度: {decision.get('confidence', 'N/A')}\n"
                 pending_reminder += f"  理由: {decision.get('reason', 'N/A')}\n"
+                
+                # 显示当时的价格（从市场数据中获取）
+                current_price = 0
+                if symbol in all_coins_data:
+                    current_price = all_coins_data[symbol].get('price', 0)
+                if current_price > 0:
+                    pending_reminder += f"  当时价格: ${current_price:,.2f}\n"
+                
                 pending_reminder += f"  止损: ${decision.get('stop_loss', 0):.2f}\n"
                 pending_reminder += f"  止盈: ${decision.get('take_profit', 0):.2f}\n"
                 pending_reminder += f"  数量: {decision.get('amount', 0)}\n"
