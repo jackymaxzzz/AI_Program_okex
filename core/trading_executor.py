@@ -11,18 +11,21 @@ from config import TRADING_CONFIG
 class TradingExecutor:
     """交易执行器 - 处理开仓、平仓、持仓管理等操作"""
     
-    def __init__(self, data_fetcher, trade_db):
+    def __init__(self, data_fetcher, trade_db, mcp_memory=None):
         """
         初始化交易执行器
         
         Args:
             data_fetcher: 数据获取器
             trade_db: 交易数据库
+            mcp_memory: MCP记忆系统（可选）
         """
         self.data_fetcher = data_fetcher
         self.trade_db = trade_db
+        self.mcp_memory = mcp_memory
         self.pending_open_decisions = {}  # 待确认的开仓决策
         self.current_cycle = 0  # 当前周期号
+        self.trade_decisions = {}  # 记录每笔交易的决策信息 {trade_id: decision_info}
     
     def execute_trade(self, decision: Dict, current_price: float, market_data: Dict, 
                      current_trade_id: Optional[int] = None, all_market_data: Dict = None) -> Optional[int]:
@@ -417,9 +420,9 @@ class TradingExecutor:
             stop_loss = decision.get('stop_loss', 0)
             take_profit = decision.get('take_profit', 0)
             
-            trade_id = self.trade_db.add_trade(
+            trade_id = self.trade_db.create_trade(
                 symbol=symbol,
-                side=pos_side,
+                signal=signal,
                 entry_price=current_price,
                 amount=amount,
                 stop_loss=stop_loss,
@@ -428,6 +431,32 @@ class TradingExecutor:
             )
             
             print(f"[数据] 交易记录已保存: ID#{trade_id}")
+            
+            # 设置止损止盈
+            if stop_loss > 0 or take_profit > 0:
+                try:
+                    self._update_real_position_sl_tp(symbol, stop_loss, take_profit)
+                except Exception as e:
+                    print(f"[警告] 设置止损止盈失败: {e}")
+            
+            # 记录到MCP记忆系统
+            if self.mcp_memory and trade_id:
+                self.trade_decisions[trade_id] = {
+                    'symbol': coin,
+                    'signal': signal,
+                    'entry_price': current_price,
+                    'amount': amount,
+                    'stop_loss': stop_loss,
+                    'take_profit': take_profit,
+                    'confidence': decision.get('confidence', 0),
+                    'reason': decision.get('reason', ''),
+                    'market_state': decision.get('market_state', 'unknown'),
+                    'technical_indicators': decision.get('technical_indicators', {}),
+                    'cycle': self.current_cycle,
+                    'timestamp': order.get('timestamp', None)
+                }
+                print(f"[记忆] 决策信息已记录到MCP")
+            
             return trade_id
             
         except Exception as e:
@@ -489,6 +518,49 @@ class TradingExecutor:
                     ai_decision=decision
                 )
                 print(f"[数据] 交易记录已更新: ID#{trade_id}")
+                
+                # 记录到MCP记忆系统
+                if self.mcp_memory and trade_id in self.trade_decisions:
+                    entry_info = self.trade_decisions[trade_id]
+                    entry_price = entry_info['entry_price']
+                    
+                    # 计算盈亏百分比
+                    if side == 'long':
+                        pnl_percent = ((current_price - entry_price) / entry_price) * 100
+                    else:  # short
+                        pnl_percent = ((entry_price - current_price) / entry_price) * 100
+                    
+                    # 构建完整的交易信息
+                    trade_info = {
+                        'symbol': entry_info['symbol'],
+                        'side': side,
+                        'entry_price': entry_price,
+                        'exit_price': current_price,
+                        'amount': entry_info['amount'],
+                        'pnl_percent': pnl_percent,
+                        'realized_pnl': realized_pnl,
+                        'stop_loss': entry_info['stop_loss'],
+                        'take_profit': entry_info['take_profit'],
+                        'confidence': entry_info['confidence'],
+                        'reason': entry_info['reason'],
+                        'market_state': entry_info['market_state'],
+                        'technical_indicators': entry_info['technical_indicators'],
+                        'entry_cycle': entry_info['cycle'],
+                        'exit_cycle': self.current_cycle,
+                        'close_reason': decision.get('reason', ''),
+                        'strategy': decision.get('strategy', 'unknown')
+                    }
+                    
+                    # 记录到MCP
+                    if pnl_percent > 0:
+                        self.mcp_memory.record_successful_trade(trade_info)
+                        print(f"[记忆] 成功交易已记录到MCP: 盈利{pnl_percent:.2f}%")
+                    else:
+                        self.mcp_memory.record_failed_trade(trade_info)
+                        print(f"[记忆] 失败交易已记录到MCP: 亏损{abs(pnl_percent):.2f}%")
+                    
+                    # 清除决策记录
+                    del self.trade_decisions[trade_id]
             
         except Exception as e:
             print(f"[失败] 平仓失败: {e}")
@@ -505,30 +577,66 @@ class TradingExecutor:
                 return
             
             side = position.get('side')  # 'long' or 'short'
+            amount = position.get('size', 0)
             
-            # OKX设置止损止盈（使用条件单）
-            # 注意：这需要使用OKX的algo order API
-            # 这里提供基本实现，实际使用时可能需要根据OKX API调整
+            if amount <= 0:
+                print(f"[警告] 持仓数量为0，无法设置止损止盈")
+                return
             
-            print(f"[数据] 更新止损止盈: {symbol} | 止损: ${stop_loss:.2f} | 止盈: ${take_profit:.2f}")
+            print(f"[数据] 设置止损止盈: {symbol} | 止损: ${stop_loss:.2f} | 止盈: ${take_profit:.2f}")
             
-            # 设置止损单
+            # OKX使用algo order设置止损止盈
+            # 参考: https://www.okx.com/docs-v5/zh/#order-book-trading-algo-trading-post-place-algo-order
+            
+            # 设置止损单 (stop-loss order)
             if stop_loss > 0:
-                sl_params = {
-                    'stopLossPrice': stop_loss,
-                    'posSide': side
-                }
-                # self.data_fetcher.exchange.create_order(...) # 需要使用algo order
+                try:
+                    sl_side = 'sell' if side == 'long' else 'buy'
+                    sl_params = {
+                        'ordType': 'conditional',  # 条件单
+                        'side': sl_side,
+                        'posSide': side,
+                        'tdMode': TRADING_CONFIG.get('trade_mode', 'cross'),
+                        'sz': str(amount),
+                        'slTriggerPx': str(stop_loss),  # 止损触发价
+                        'slOrdPx': '-1',  # 市价单
+                        'reduceOnly': True
+                    }
+                    
+                    # 使用OKX的private_post_trade_order_algo接口
+                    result = self.data_fetcher.exchange.private_post_trade_order_algo({
+                        'instId': symbol,
+                        **sl_params
+                    })
+                    print(f"  [完成] 止损单已设置: ${stop_loss:.2f}")
+                except Exception as e:
+                    print(f"  [失败] 止损单设置失败: {e}")
             
-            # 设置止盈单
+            # 设置止盈单 (take-profit order)
             if take_profit > 0:
-                tp_params = {
-                    'takeProfitPrice': take_profit,
-                    'posSide': side
-                }
-                # self.data_fetcher.exchange.create_order(...) # 需要使用algo order
-            
-            print(f"[完成] 止损止盈参数已设置")
+                try:
+                    tp_side = 'sell' if side == 'long' else 'buy'
+                    tp_params = {
+                        'ordType': 'conditional',  # 条件单
+                        'side': tp_side,
+                        'posSide': side,
+                        'tdMode': TRADING_CONFIG.get('trade_mode', 'cross'),
+                        'sz': str(amount),
+                        'tpTriggerPx': str(take_profit),  # 止盈触发价
+                        'tpOrdPx': '-1',  # 市价单
+                        'reduceOnly': True
+                    }
+                    
+                    # 使用OKX的private_post_trade_order_algo接口
+                    result = self.data_fetcher.exchange.private_post_trade_order_algo({
+                        'instId': symbol,
+                        **tp_params
+                    })
+                    print(f"  [完成] 止盈单已设置: ${take_profit:.2f}")
+                except Exception as e:
+                    print(f"  [失败] 止盈单设置失败: {e}")
             
         except Exception as e:
             print(f"[失败] 更新止损止盈失败: {e}")
+            import traceback
+            traceback.print_exc()

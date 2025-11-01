@@ -35,8 +35,12 @@ class SimpleAITradingBot:
         self.mcp_sync = MCPDatabaseSync(self.ai_trader.mcp_memory, self.trade_db)
         print("[同步] MCP数据库同步器已初始化")
         
-        # 初始化新模块
-        self.trading_executor = TradingExecutor(self.data_fetcher, self.trade_db)
+        # 初始化新模块（传递MCP记忆系统）
+        self.trading_executor = TradingExecutor(
+            self.data_fetcher, 
+            self.trade_db,
+            mcp_memory=self.ai_trader.mcp_memory  # 传递MCP记忆
+        )
         self.position_manager = PositionManager(self.data_fetcher, self.trade_db)
         self.order_sync = OrderSync(self.data_fetcher, self.trade_db)
         
