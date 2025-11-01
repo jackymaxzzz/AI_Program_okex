@@ -668,7 +668,7 @@ class TradingExecutor:
                                 'slOrdPx': '-1'  # 市价单
                             }
                             
-                            # print(f"  [调试] 止损单参数: {sl_params}")
+                            print(f"  [调试] 止损单参数: {sl_params}")
                             
                             # 使用OKX原生API
                             result = self.data_fetcher.exchange.private_post_trade_order_algo(sl_params)
@@ -677,7 +677,8 @@ class TradingExecutor:
                                 algo_id = result.get('data', [{}])[0].get('algoId', 'N/A')
                                 print(f"  [完成] 止损单已设置: ${stop_loss:.2f} (AlgoID: {algo_id})")
                             else:
-                                print(f"  [失败] 止损单设置失败: {result}")
+                                print(f"  [失败] 止损单设置失败: code={result.get('code')}, msg={result.get('msg')}")
+                                print(f"  [详细] 完整响应: {result}")
                         except Exception as e:
                             print(f"  [失败] 止损单设置失败: {e}")
                     
@@ -700,7 +701,7 @@ class TradingExecutor:
                                 'tpOrdPx': '-1'  # 市价单
                             }
                             
-                            # print(f"  [调试] 止盈单参数: {tp_params}")
+                            print(f"  [调试] 止盈单参数: {tp_params}")
                             
                             # 使用OKX原生API
                             result = self.data_fetcher.exchange.private_post_trade_order_algo(tp_params)
@@ -709,7 +710,8 @@ class TradingExecutor:
                                 algo_id = result.get('data', [{}])[0].get('algoId', 'N/A')
                                 print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (AlgoID: {algo_id})")
                             else:
-                                print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (AlgoID: {tp_order.get('id', 'N/A')})")
+                                print(f"  [失败] 止盈单设置失败: code={result.get('code')}, msg={result.get('msg')}")
+                                print(f"  [详细] 完整响应: {result}")
                         except Exception as e:
                             print(f"  [失败] 止盈单设置失败: {e}")
                         
