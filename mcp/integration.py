@@ -62,6 +62,17 @@ class MCPTradingMemory:
             import sqlite3
             conn = sqlite3.connect(db.db_path)
             cursor = conn.cursor()
+            
+            # 先检查有多少条记录
+            cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'CLOSED'")
+            total_closed = cursor.fetchone()[0]
+            print(f"[MCP] 数据库中有{total_closed}笔已完成的交易")
+            
+            if total_closed == 0:
+                conn.close()
+                print(f"[MCP] 没有历史交易需要恢复")
+                return
+            
             cursor.execute('''
                 SELECT symbol, side, entry_price, exit_price, quantity, 
                        realized_pnl, pnl_percent, open_time, close_time
