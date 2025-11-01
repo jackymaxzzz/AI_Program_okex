@@ -446,23 +446,41 @@ class TradingExecutor:
             # 调试信息
             print(f"[调试] 开仓 - mcp_memory={self.mcp_memory is not None}, trade_id={trade_id}")
             
-            # 记录到MCP记忆系统
+            # 记录到MCP记忆系统（详细的决策信息供AI学习）
             if self.mcp_memory and trade_id:
                 self.trade_decisions[trade_id] = {
+                    # 基本信息
                     'symbol': coin,
                     'signal': signal,
                     'entry_price': current_price,
                     'amount': amount,
                     'stop_loss': stop_loss,
                     'take_profit': take_profit,
-                    'confidence': decision.get('confidence', 0),
+                    
+                    # AI决策信息
+                    'confidence': decision.get('confidence', 'UNKNOWN'),
                     'reason': decision.get('reason', ''),
+                    'think': decision.get('think', ''),  # AI的完整思考过程
                     'market_state': decision.get('market_state', 'unknown'),
+                    'strategy': decision.get('strategy', 'unknown'),
+                    
+                    # 技术指标（开仓时的市场状态）
                     'technical_indicators': decision.get('technical_indicators', {}),
+                    
+                    # 时间信息
                     'cycle': self.current_cycle,
-                    'timestamp': order.get('timestamp', None)
+                    'entry_time': order.get('datetime', ''),
+                    'timestamp': order.get('timestamp', None),
+                    
+                    # 市场环境（供AI学习什么样的市场环境容易成功）
+                    'market_trend': decision.get('market_trend', 'unknown'),
+                    'volume_ratio': decision.get('volume_ratio', 0),
+                    
+                    # 订单信息
+                    'order_id': order.get('id', ''),
+                    'leverage': TRADING_CONFIG.get('leverage', 10)
                 }
-                print(f"[记忆] 决策信息已记录到MCP")
+                print(f"[记忆] 决策信息已记录到MCP（含完整think过程）")
             
             return trade_id
             
