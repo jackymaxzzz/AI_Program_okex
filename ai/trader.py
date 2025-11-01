@@ -551,10 +551,19 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                 # 获取持仓ID
                 pos_id = position.get('pos_id', 'N/A')
                 
+                # 格式化盈亏显示
+                unrealized_pnl = position.get('unrealized_pnl', 0)
+                if unrealized_pnl > 0:
+                    pnl_str = f"盈利 ${unrealized_pnl:,.2f}"
+                elif unrealized_pnl < 0:
+                    pnl_str = f"亏损 ${abs(unrealized_pnl):,.2f}"
+                else:
+                    pnl_str = f"持平 $0.00"
+                
                 account_overview += f"""
 - {position.get('symbol', 'N/A')} {position.get('side', 'N/A').upper()}
   持仓ID: {pos_id} | 数量: {amount_str} | 持仓时长: {holding_duration}
-  开仓价: ${position.get('entry_price', 0):,.2f} | 未实现盈亏: ${position.get('unrealized_pnl', 0):,.2f}
+  开仓价: ${position.get('entry_price', 0):,.2f} | {pnl_str}
   清算价: ${position.get('liquidation_price', 0):,.2f} | 杠杆: {position.get('leverage', 10)}x"""
                 
                 # 显示止损止盈（包括未设置的情况）
