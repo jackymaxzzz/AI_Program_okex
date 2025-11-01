@@ -311,19 +311,19 @@ class MCPTradingMemory:
             if symbol_losses:
                 insights.append(f"   平均亏损: {avg_loss:.2f}%")
             
-            # 最近的失败教训
-            recent_losses = symbol_losses[-3:] if len(symbol_losses) > 0 else []
+            # 最近的失败教训（只显示最近2笔）
+            recent_losses = symbol_losses[-2:] if len(symbol_losses) > 0 else []
             if recent_losses:
                 insights.append(f"   [警告] 最近失败:")
                 for loss in recent_losses:
-                    insights.append(f"      - {loss['observation']}")
+                    insights.append(f"      {loss['observation']}")
             
-            # 成功经验
-            recent_wins = symbol_wins[-3:] if len(symbol_wins) > 0 else []
+            # 成功经验（只显示最近2笔）
+            recent_wins = symbol_wins[-2:] if len(symbol_wins) > 0 else []
             if recent_wins:
-                insights.append(f"   [完成] 最近成功:")
+                insights.append(f"   [成功] 最近成功:")
                 for win in recent_wins:
-                    insights.append(f"      - {win['observation']}")
+                    insights.append(f"      {win['observation']}")
             
             return "\n".join(insights)
             
