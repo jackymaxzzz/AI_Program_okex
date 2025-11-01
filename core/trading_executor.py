@@ -443,6 +443,9 @@ class TradingExecutor:
                 except Exception as e:
                     print(f"[警告] 设置止损止盈失败: {e}")
             
+            # 调试信息
+            print(f"[调试] 开仓 - mcp_memory={self.mcp_memory is not None}, trade_id={trade_id}")
+            
             # 记录到MCP记忆系统
             if self.mcp_memory and trade_id:
                 self.trade_decisions[trade_id] = {
@@ -522,6 +525,9 @@ class TradingExecutor:
                     ai_decision=decision
                 )
                 print(f"[数据] 交易记录已更新: ID#{trade_id}")
+                
+                # 调试信息
+                print(f"[调试] trade_id={trade_id}, mcp_memory={self.mcp_memory is not None}, trade_decisions包含={trade_id in self.trade_decisions}")
                 
                 # 记录到MCP记忆系统
                 if self.mcp_memory and trade_id in self.trade_decisions:
