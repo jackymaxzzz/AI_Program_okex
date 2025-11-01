@@ -51,6 +51,20 @@ class SimpleAITradingBot:
         except Exception as e:
             print(f"[警告] 加载MCP记忆失败: {e}")
         
+        # 如果MCP为空，从OKX API初始化
+        if len(self.ai_trader.mcp_memory.successful_trades) == 0 and len(self.ai_trader.mcp_memory.failed_trades) == 0:
+            try:
+                from mcp.init_from_api import init_mcp_from_okx_trades
+                trades_count = init_mcp_from_okx_trades(
+                    self.ai_trader.mcp_memory,
+                    self.data_fetcher,
+                    days=30  # 获取最近30天的历史
+                )
+                if trades_count > 0:
+                    print(f"[初始化] MCP已从OKX API初始化，共{trades_count}笔历史交易")
+            except Exception as e:
+                print(f"[警告] MCP从API初始化失败: {e}")
+        
         # 状态
         self.current_trade_id = None
         self.cycle_count = 0
