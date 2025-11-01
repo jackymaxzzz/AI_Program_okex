@@ -592,42 +592,31 @@ class TradingExecutor:
             # OKX使用algo order设置止损止盈
             # 参考: https://www.okx.com/docs-v5/zh/#order-book-trading-algo-trading-post-place-algo-order
             
-            # 设置止损止盈单（使用OKX的algo order）
-            # 参考: https://www.okx.com/docs-v5/zh/#order-book-trading-algo-trading-post-place-algo-order
+            # 设置止损止盈（暂时记录到数据库，实际触发由AI监控）
+            # 注意：OKX的algo order API比较复杂，这里先简化处理
+            # 后续可以通过AI监控价格来手动平仓
             if stop_loss > 0 or take_profit > 0:
                 try:
-                    close_side = 'sell' if side == 'long' else 'buy'
-                    
-                    # 构建algo order参数
-                    algo_params = {
-                        'instId': symbol,
-                        'tdMode': TRADING_CONFIG.get('trade_mode', 'cross'),
-                        'side': close_side,
-                        'posSide': side,
-                        'ordType': 'conditional',  # 条件单
-                        'sz': str(amount)
-                    }
-                    
-                    # 添加止损价格
-                    if stop_loss > 0:
-                        algo_params['slTriggerPx'] = str(stop_loss)
-                        algo_params['slOrdPx'] = '-1'  # 市价单
-                    
-                    # 添加止盈价格
-                    if take_profit > 0:
-                        algo_params['tpTriggerPx'] = str(take_profit)
-                        algo_params['tpOrdPx'] = '-1'  # 市价单
-                    
-                    # 调用API
-                    result = self.data_fetcher.exchange.private_post_trade_order_algo(algo_params)
+                    # 更新数据库中的止损止盈
+                    open_trades = self.trade_db.get_open_trades(symbol)
+                    if open_trades:
+                        for trade in open_trades:
+                            self.trade_db.update_stop_loss_take_profit(
+                                trade_id=trade['id'],
+                                stop_loss=stop_loss if stop_loss > 0 else trade.get('stop_loss'),
+                                take_profit=take_profit if take_profit > 0 else trade.get('take_profit')
+                            )
                     
                     if stop_loss > 0:
-                        print(f"  [完成] 止损单已设置: ${stop_loss:.2f}")
+                        print(f"  [完成] 止损已记录: ${stop_loss:.2f} (由AI监控触发)")
                     if take_profit > 0:
-                        print(f"  [完成] 止盈单已设置: ${take_profit:.2f}")
+                        print(f"  [完成] 止盈已记录: ${take_profit:.2f} (由AI监控触发)")
+                    
+                    # TODO: 后续可以实现OKX的algo order
+                    # 目前通过AI每个周期检查价格来触发止损止盈
                         
                 except Exception as e:
-                    print(f"  [失败] 止损止盈设置失败: {e}")
+                    print(f"  [失败] 止损止盈记录失败: {e}")
                     import traceback
                     traceback.print_exc()
             

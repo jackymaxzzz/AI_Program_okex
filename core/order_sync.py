@@ -36,9 +36,9 @@ class OrderSync:
             for symbol in symbols:
                 try:
                     # 获取该币种的历史订单
-                    orders = self.data_fetcher.fetch_my_trades(
+                    orders = self.data_fetcher.exchange.fetch_my_trades(
                         symbol=symbol,
-                        since=(datetime.now() - timedelta(days=7)).timestamp() * 1000
+                        since=int((datetime.now() - timedelta(days=7)).timestamp() * 1000)
                     )
                     
                     if not orders:
@@ -126,8 +126,8 @@ class OrderSync:
             订单列表
         """
         try:
-            since = (datetime.now() - timedelta(days=days)).timestamp() * 1000
-            orders = self.data_fetcher.fetch_my_trades(symbol=symbol, since=since)
+            since = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+            orders = self.data_fetcher.exchange.fetch_my_trades(symbol=symbol, since=since)
             return orders if orders else []
         except Exception as e:
             print(f"[警告] 获取成交订单失败: {e}")
