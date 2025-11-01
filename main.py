@@ -14,7 +14,7 @@ from core import TradingExecutor, PositionManager, OrderSync
 
 
 class SimpleAITradingBot:
-    """简化版AI交易机器人 - 纯AI驱动"""
+    """AI交易机器人 - Power by DeepSeek AI"""
     
     def __init__(self):
         """初始化交易机器人"""
@@ -260,10 +260,17 @@ class SimpleAITradingBot:
                     symbol = symbol.split('/')[0]
                 coin_data = all_market_data.get(symbol, {})
                 # 使用新的交易执行器
+                # 传递周期号和待确认决策
+                self.trading_executor.current_cycle = self.cycle_count
+                self.trading_executor.pending_open_decisions = self.pending_open_decisions
+                
                 self.current_trade_id = self.trading_executor.execute_trade(
                     decision, coin_data.get('price', 0), coin_data, 
                     self.current_trade_id, all_market_data
                 )
+                
+                # 同步待确认决策
+                self.pending_open_decisions = self.trading_executor.pending_open_decisions
             
             # 10. 执行持仓管理建议（包括平仓、调整止损止盈、以及可能的新开仓）
             position_reviews = decision.get('position_reviews', [])

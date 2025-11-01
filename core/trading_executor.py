@@ -21,6 +21,8 @@ class TradingExecutor:
         """
         self.data_fetcher = data_fetcher
         self.trade_db = trade_db
+        self.pending_open_decisions = {}  # 待确认的开仓决策
+        self.current_cycle = 0  # 当前周期号
     
     def execute_trade(self, decision: Dict, current_price: float, market_data: Dict, 
                      current_trade_id: Optional[int] = None, all_market_data: Dict = None) -> Optional[int]:
@@ -55,9 +57,15 @@ class TradingExecutor:
         
         # 执行交易
         if signal in ['BUY', 'SELL']:
-            return self._execute_open_position(
-                signal, symbol_full, decision, current_price, market_data
-            )
+            # 检查是否需要二次确认
+            if TRADING_CONFIG.get('require_double_confirmation', True):
+                return self._execute_with_confirmation(
+                    signal, symbol_coin, symbol_full, decision, current_price, market_data
+                )
+            else:
+                return self._execute_open_position(
+                    signal, symbol_full, decision, current_price, market_data
+                )
         elif signal == 'CLOSE':
             self._execute_close_position(
                 symbol_full, decision, current_price, current_trade_id
@@ -65,6 +73,69 @@ class TradingExecutor:
             return None
         
         return current_trade_id
+    
+    def _execute_with_confirmation(self, signal: str, symbol_coin: str, symbol_full: str,
+                                   decision: Dict, current_price: float, market_data: Dict) -> Optional[int]:
+        """
+        执行带二次确认的开仓
+        
+        Args:
+            signal: 交易信号
+            symbol_coin: 币种名称（如BTC）
+            symbol_full: 完整交易对（如BTC/USDT:USDT）
+            decision: AI决策
+            current_price: 当前价格
+            market_data: 市场数据
+            
+        Returns:
+            交易ID（如果确认开仓）
+        """
+        # 检查是否有待确认的决策
+        if symbol_coin in self.pending_open_decisions:
+            pending = self.pending_open_decisions[symbol_coin]
+            pending_signal = pending.get('signal')
+            pending_cycle = pending.get('cycle', 0)
+            
+            # 如果信号一致，执行开仓
+            if pending_signal == signal:
+                print(f"\n[确认] {symbol_coin} 二次确认通过")
+                print(f"   第一次: 周期#{pending_cycle} {pending_signal}")
+                print(f"   第二次: 周期#{self.current_cycle} {signal}")
+                print(f"   执行开仓...\n")
+                
+                # 清除待确认记录
+                del self.pending_open_decisions[symbol_coin]
+                
+                # 执行开仓
+                return self._execute_open_position(
+                    signal, symbol_full, decision, current_price, market_data
+                )
+            else:
+                # 信号不一致，更新待确认记录
+                print(f"\n[取消] {symbol_coin} 信号不一致")
+                print(f"   第一次: {pending_signal}")
+                print(f"   第二次: {signal}")
+                print(f"   更新为新信号，等待下次确认\n")
+                
+                self.pending_open_decisions[symbol_coin] = {
+                    'signal': signal,
+                    'cycle': self.current_cycle,
+                    'decision': decision
+                }
+                return None
+        else:
+            # 第一次出现开仓信号，记录待确认
+            print(f"\n[待确认] {symbol_coin} 开仓信号")
+            print(f"   信号: {signal}")
+            print(f"   价格: ${current_price:.2f}")
+            print(f"   等待下一周期确认...\n")
+            
+            self.pending_open_decisions[symbol_coin] = {
+                'signal': signal,
+                'cycle': self.current_cycle,
+                'decision': decision
+            }
+            return None
     
     def _execute_open_position(self, signal: str, symbol: str, decision: Dict, 
                                current_price: float, market_data: Dict) -> Optional[int]:
