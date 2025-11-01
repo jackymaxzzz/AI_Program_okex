@@ -610,16 +610,18 @@ class TradingExecutor:
                     if trade_mode == 'isolated':
                         params['posSide'] = side
                     
-                    # 设置止损单
+                    # 设置止损单（使用OKX原生API）
                     if stop_loss > 0:
                         try:
-                            # 构建止损单参数（全仓模式不能有posSide）
+                            # 直接使用OKX的algo order API
                             sl_params = {
+                                'instId': symbol,
                                 'tdMode': trade_mode,
-                                'stopPrice': stop_loss,
-                                'triggerPrice': stop_loss,
-                                'orderPx': '-1',  # -1表示市价单
-                                'reduceOnly': True
+                                'side': close_side,
+                                'ordType': 'conditional',  # 条件单
+                                'sz': str(amount),
+                                'slTriggerPx': str(stop_loss),  # 止损触发价
+                                'slOrdPx': '-1'  # 市价单
                             }
                             
                             # 只有逐仓模式才添加posSide
@@ -628,28 +630,29 @@ class TradingExecutor:
                             
                             print(f"  [调试] 止损单参数: {sl_params}")
                             
-                            sl_order = self.data_fetcher.exchange.create_order(
-                                symbol=symbol,
-                                type='stop',
-                                side=close_side,
-                                amount=amount,
-                                price=stop_loss,
-                                params=sl_params
-                            )
-                            print(f"  [完成] 止损单已设置: ${stop_loss:.2f} (订单ID: {sl_order.get('id', 'N/A')})")
+                            # 使用OKX原生API
+                            result = self.data_fetcher.exchange.private_post_trade_order_algo(sl_params)
+                            
+                            if result.get('code') == '0':
+                                algo_id = result.get('data', [{}])[0].get('algoId', 'N/A')
+                                print(f"  [完成] 止损单已设置: ${stop_loss:.2f} (AlgoID: {algo_id})")
+                            else:
+                                print(f"  [失败] 止损单设置失败: {result}")
                         except Exception as e:
                             print(f"  [失败] 止损单设置失败: {e}")
                     
-                    # 设置止盈单
+                    # 设置止盈单（使用OKX原生API）
                     if take_profit > 0:
                         try:
-                            # 构建止盈单参数（全仓模式不能有posSide）
+                            # 直接使用OKX的algo order API
                             tp_params = {
+                                'instId': symbol,
                                 'tdMode': trade_mode,
-                                'stopPrice': take_profit,
-                                'triggerPrice': take_profit,
-                                'orderPx': '-1',  # -1表示市价单
-                                'reduceOnly': True
+                                'side': close_side,
+                                'ordType': 'conditional',  # 条件单
+                                'sz': str(amount),
+                                'tpTriggerPx': str(take_profit),  # 止盈触发价
+                                'tpOrdPx': '-1'  # 市价单
                             }
                             
                             # 只有逐仓模式才添加posSide
@@ -658,15 +661,14 @@ class TradingExecutor:
                             
                             print(f"  [调试] 止盈单参数: {tp_params}")
                             
-                            tp_order = self.data_fetcher.exchange.create_order(
-                                symbol=symbol,
-                                type='take_profit',
-                                side=close_side,
-                                amount=amount,
-                                price=take_profit,
-                                params=tp_params
-                            )
-                            print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (订单ID: {tp_order.get('id', 'N/A')})")
+                            # 使用OKX原生API
+                            result = self.data_fetcher.exchange.private_post_trade_order_algo(tp_params)
+                            
+                            if result.get('code') == '0':
+                                algo_id = result.get('data', [{}])[0].get('algoId', 'N/A')
+                                print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (AlgoID: {algo_id})")
+                            else:
+                                print(f"  [失败] 止盈单设置失败: {result}")
                         except Exception as e:
                             print(f"  [失败] 止盈单设置失败: {e}")
                     
