@@ -804,7 +804,13 @@ XRP: 1张=100个，amount=0.1代表10个XRP
                     for symbol, stats in sorted(symbol_stats.items(), key=lambda x: x[1]['success'] + x[1]['failed'], reverse=True):
                         total = stats['success'] + stats['failed']
                         win_rate = (stats['success'] / total * 100) if total > 0 else 0
-                        stats_text += f"  {symbol}: {total}笔 (胜率{win_rate:.0f}%, 盈亏${stats['total_pnl']:.2f})\n"
+                        pnl = stats['total_pnl']
+                        # 显示更高精度，避免显示0.00
+                        if abs(pnl) < 0.01:
+                            pnl_str = f"${pnl:+.4f}" if pnl != 0 else "$0.00"
+                        else:
+                            pnl_str = f"${pnl:+.2f}"
+                        stats_text += f"  {symbol}: {total}笔 (胜率{win_rate:.0f}%, 盈亏{pnl_str})\n"
                 
                 mcp_insights = stats_text
             
