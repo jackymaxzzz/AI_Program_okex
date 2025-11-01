@@ -685,6 +685,11 @@ XRP: 1张=100个，amount=0.1代表10个XRP
         # 获取MCP记忆洞察（包含长期记忆）
         mcp_insights = ""
         if hasattr(self, 'mcp_memory') and self.mcp_memory.enabled:
+            # 调试：显示MCP记录数量
+            success_count = len(self.mcp_memory.successful_trades)
+            failed_count = len(self.mcp_memory.failed_trades)
+            print(f"[MCP] 历史记录: 成功{success_count}笔, 失败{failed_count}笔")
+            
             # 获取短期交易洞察
             all_insights = self.mcp_memory.get_all_insights()
             if all_insights:

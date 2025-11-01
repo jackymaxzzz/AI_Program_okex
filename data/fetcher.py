@@ -402,13 +402,13 @@ class DataFetcher:
                     btc_amount = contracts * contract_size
                     
                     # 调试：打印原始ccxt数据
-                    print(f"[调试] ccxt格式 {pos['symbol']}: cTime={pos.get('cTime')}, uTime={pos.get('uTime')}")
+                    # print(f"[调试] ccxt格式 {pos['symbol']}: cTime={pos.get('cTime')}, uTime={pos.get('uTime')}")
                     
                     # 尝试从OKX原始数据获取时间（ccxt会保存在info字段）
                     okx_info = pos.get('info', {})
                     okx_ctime = okx_info.get('cTime')
                     okx_utime = okx_info.get('uTime')
-                    print(f"[调试] OKX原始 {pos['symbol']}: cTime={okx_ctime}, uTime={okx_utime}")
+                    # print(f"[调试] OKX原始 {pos['symbol']}: cTime={okx_ctime}, uTime={okx_utime}")
                     
                     pos_info = {
                         'side': pos['side'],  # 'long' or 'short'
