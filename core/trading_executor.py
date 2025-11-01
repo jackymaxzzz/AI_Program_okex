@@ -613,18 +613,28 @@ class TradingExecutor:
                     # 设置止损单
                     if stop_loss > 0:
                         try:
+                            # 构建止损单参数（全仓模式不能有posSide）
+                            sl_params = {
+                                'tdMode': trade_mode,
+                                'stopPrice': stop_loss,
+                                'triggerPrice': stop_loss,
+                                'orderPx': '-1',  # -1表示市价单
+                                'reduceOnly': True
+                            }
+                            
+                            # 只有逐仓模式才添加posSide
+                            if trade_mode == 'isolated':
+                                sl_params['posSide'] = side
+                            
+                            print(f"  [调试] 止损单参数: {sl_params}")
+                            
                             sl_order = self.data_fetcher.exchange.create_order(
                                 symbol=symbol,
-                                type='stop',  # 止损单
+                                type='stop',
                                 side=close_side,
                                 amount=amount,
-                                price=stop_loss,  # 触发价格
-                                params={
-                                    **params,
-                                    'stopPrice': stop_loss,  # 触发价
-                                    'triggerPrice': stop_loss,
-                                    'orderPx': '-1'  # -1表示市价单
-                                }
+                                price=stop_loss,
+                                params=sl_params
                             )
                             print(f"  [完成] 止损单已设置: ${stop_loss:.2f} (订单ID: {sl_order.get('id', 'N/A')})")
                         except Exception as e:
@@ -633,18 +643,28 @@ class TradingExecutor:
                     # 设置止盈单
                     if take_profit > 0:
                         try:
+                            # 构建止盈单参数（全仓模式不能有posSide）
+                            tp_params = {
+                                'tdMode': trade_mode,
+                                'stopPrice': take_profit,
+                                'triggerPrice': take_profit,
+                                'orderPx': '-1',  # -1表示市价单
+                                'reduceOnly': True
+                            }
+                            
+                            # 只有逐仓模式才添加posSide
+                            if trade_mode == 'isolated':
+                                tp_params['posSide'] = side
+                            
+                            print(f"  [调试] 止盈单参数: {tp_params}")
+                            
                             tp_order = self.data_fetcher.exchange.create_order(
                                 symbol=symbol,
-                                type='take_profit',  # 止盈单
+                                type='take_profit',
                                 side=close_side,
                                 amount=amount,
-                                price=take_profit,  # 触发价格
-                                params={
-                                    **params,
-                                    'stopPrice': take_profit,  # 触发价
-                                    'triggerPrice': take_profit,
-                                    'orderPx': '-1'  # -1表示市价单
-                                }
+                                price=take_profit,
+                                params=tp_params
                             )
                             print(f"  [完成] 止盈单已设置: ${take_profit:.2f} (订单ID: {tp_order.get('id', 'N/A')})")
                         except Exception as e:
