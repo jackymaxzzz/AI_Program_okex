@@ -75,7 +75,16 @@ def init_mcp_from_okx_trades(mcp_memory, data_fetcher, days: int = 30):
                         else:  # short
                             pnl_percent = ((entry_price - price) / entry_price) * 100
                         
-                        # 构建交易信息
+                        # 计算持仓时长
+                        holding_seconds = (timestamp - entry_info['timestamp']) / 1000
+                        if holding_seconds < 3600:
+                            holding_duration = f"{holding_seconds/60:.0f}分钟"
+                        elif holding_seconds < 86400:
+                            holding_duration = f"{holding_seconds/3600:.1f}小时"
+                        else:
+                            holding_duration = f"{holding_seconds/86400:.1f}天"
+                        
+                        # 构建详细的交易信息
                         trade_info = {
                             'symbol': symbol.split('/')[0],
                             'side': pos_side,
@@ -86,16 +95,22 @@ def init_mcp_from_okx_trades(mcp_memory, data_fetcher, days: int = 30):
                             'realized_pnl': fill_pnl,
                             'entry_time': datetime.fromtimestamp(entry_info['timestamp'] / 1000).isoformat(),
                             'exit_time': datetime.fromtimestamp(timestamp / 1000).isoformat(),
-                            'strategy': 'historical'
+                            'holding_duration': holding_duration,
+                            'holding_seconds': holding_seconds,
+                            'strategy': 'historical',
+                            'reason': f"历史交易：{'做多' if pos_side == 'long' else '做空'} {symbol.split('/')[0]}，持仓{holding_duration}，{'盈利' if pnl_percent > 0 else '亏损'}{abs(pnl_percent):.2f}%",
+                            'observation': f"{'✅ 成功' if pnl_percent > 0 else '❌ 失败'}: {symbol.split('/')[0]} {pos_side} 入场${entry_price:.2f} 出场${price:.2f} 持仓{holding_duration} {'盈利' if pnl_percent > 0 else '亏损'}{abs(pnl_percent):.2f}% (${fill_pnl:.2f})"
                         }
                         
                         # 记录到MCP
                         if pnl_percent > 0:
                             mcp_memory.record_successful_trade(trade_info)
                             successful_count += 1
+                            print(f"  ✅ {trade_info['observation']}")
                         else:
                             mcp_memory.record_failed_trade(trade_info)
                             failed_count += 1
+                            print(f"  ❌ {trade_info['observation']}")
                         
                         total_trades += 1
                         
